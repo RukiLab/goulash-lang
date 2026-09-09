@@ -1,0 +1,29 @@
+{
+  "name": "goulash",
+  "displayName": "Goulash",
+  "description": "Goulash (.gsh) language support: syntax highlighting and editing helpers",
+  "version": "0.1.0",
+  "publisher": "goulash",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "goulash",
+        "aliases": ["Goulash", "goulash"],
+        "extensions": [".gsh"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "goulash",
+        "scopeName": "source.goulash",
+        "path": "./syntaxes/goulash.tmLanguage.json"
+      }
+    ]
+  }
+}

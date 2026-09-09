@@ -1,0 +1,480 @@
+// Preprocessor (#include, #define, conditionals) for Goulash v0.1.
+//
+// A directive is a whole line whose first non-space character is `#`.
+// Supported directives (minimal set):
+//
+//	#include "path"   splice a file (once-semantics, circular = error)
+//	#define NAME lit  constant: one int/float/string/bool literal
+//	                  (optional leading `-` for numbers)
+//	#ifdef NAME / #ifndef NAME / #else / #endif
+//	                  conditional lines (nestable)
+//	#error message    fail with message when reached
+//
+// NOTE: `#enum` is rejected (unknown directive); sequential constants
+// use the bare `enum` statement, expanded by the parser pre-pass.
+//
+// Search order: the including file's directory, then the working
+// directory; absolute paths are used as-is. Tokens keep file-local
+// line numbers and carry the display path in Token.File. Directive and
+// inactive lines are blanked (never deleted) so every line number stays
+// intact. #define applies textually in line order: a use sees defines
+// from earlier lines only (same file or an earlier include).
+//
+// NOTE: directives are recognized before comments, so a `#` at a line
+// start inside a block comment still counts as a directive.
+package main
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// CombineFile reads entry and splices its #include tree into one token
+// stream (ending with EOF). Display paths stay relative when possible.
+func CombineFile(entry string) ([]Token, error) {
+	st := newIncluder()
+	return st.combineFile(entry, "")
+}
+
+// CombineSource splices directives found in src (a REPL input or test
+// snippet). display names the pseudo-file in errors ("" keeps the legacy
+// position format); parentDir anchors relative targets. NOTE: each call
+// starts with fresh preprocessor state, so REPL #defines live for one
+// input only.
+func CombineSource(display, src, parentDir string) ([]Token, error) {
+	st := newIncluder()
+	return st.combineSource(display, src, parentDir)
+}
+
+type includer struct {
+	done  map[string]bool // absolute paths already spliced (once)
+	stack []string        // absolute paths on the current chain (cycles)
+	// Preprocessor state, shared across the whole include tree so
+	// defines flow into (and out of) included files in line order.
+	defines map[string]ppDefine
+	conds   []ppFrame
+}
+
+// ppDefine is a #define constant: one literal token.
+type ppDefine struct {
+	typ TokenType // TokInt, TokFloat, TokString, TokTrue, TokFalse
+	lit string
+}
+
+// ppFrame is one open #ifdef/#ifndef level.
+type ppFrame struct {
+	parentActive bool
+	active       bool // this branch active (parentActive && taken-branch)
+	taken        bool // the #if branch was taken (drives #else)
+	elseSeen     bool
+}
+
+func newIncluder() *includer {
+	return &includer{done: map[string]bool{}, defines: map[string]ppDefine{}}
+}
+
+// curActive reports whether the current line is in live code.
+func (st *includer) curActive() bool {
+	if len(st.conds) == 0 {
+		return true
+	}
+	return st.conds[len(st.conds)-1].active
+}
+
+func (st *includer) combineFile(path, parentDir string) ([]Token, error) {
+	found, err := resolveInclude(path, parentDir)
+	if err != nil {
+		return nil, err
+	}
+	abs, err := filepath.Abs(found)
+	if err != nil {
+		return nil, fmt.Errorf("%q を解決できません：%s", path, err.Error())
+	}
+	for _, p := range st.stack {
+		if p == abs {
+			chain := append(append([]string{}, st.stack...), abs)
+			for i := range chain {
+				chain[i] = displayPath(chain[i])
+			}
+			return nil, fmt.Errorf("循環する #include です：%s", strings.Join(chain, " -> "))
+		}
+	}
+	if st.done[abs] {
+		return nil, nil // once-semantics: shared libraries splice once
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		return nil, fmt.Errorf("#include %q を開けません：%s", path, err.Error())
+	}
+	st.stack = append(st.stack, abs)
+	toks, err := st.combineSource(displayPath(abs), string(data), filepath.Dir(abs))
+	st.stack = st.stack[:len(st.stack)-1]
+	if err != nil {
+		return nil, err
+	}
+	st.done[abs] = true
+	return toks, nil
+}
+
+// ownDef is a validated #define with its 1-based line, applied to the
+// shared table in line order (see combineSource).
+type ownDef struct {
+	line int
+	name string
+	def  ppDefine
+}
+
+// combineSource runs the preprocessor line pass (conditionals, #define
+// collection, #error), lexes the live lines, substitutes #define uses,
+// and splices each #include's child tokens at its line, separated by a
+// newline so statements never merge across files.
+func (st *includer) combineSource(display, src, parentDir string) ([]Token, error) {
+	lines := strings.Split(src, "\n")
+	condDepth := len(st.conds) // our frames; a file must not pop its parent's
+	dirs := make([]*directive, len(lines))
+	active := make([]bool, len(lines))
+	blanked := make([]string, len(lines))
+	// base is the define set inherited at file entry (for own-token
+	// substitution). live tracks base plus this file's defines in line
+	// order (for #ifdef checks and redefinition detection).
+	base := make(map[string]ppDefine, len(st.defines))
+	for k, v := range st.defines {
+		base[k] = v
+	}
+	live := make(map[string]ppDefine, len(base))
+	for k, v := range base {
+		live[k] = v
+	}
+	var own []ownDef
+
+	// Phase 1: directive pass in line order.
+	for i, ln := range lines {
+		d, err := parseDirective(ln)
+		if err != nil {
+			return nil, &LexError{File: display, Line: i + 1, Column: 1, Msg: err.Error()}
+		}
+		dirs[i] = d
+		if d == nil {
+			active[i] = st.curActive()
+			if active[i] {
+				blanked[i] = ln
+			} else {
+				blanked[i] = ""
+			}
+			continue
+		}
+		blanked[i] = "" // directive lines never reach the lexer
+		active[i] = st.curActive()
+		switch d.kind {
+		case dirInclude:
+			// Handled in phase 3 (only when active).
+		case dirDefine:
+			if !active[i] {
+				continue
+			}
+			def, err := parseDefineValue(d.rest)
+			if err != nil {
+				return nil, &LexError{File: display, Line: i + 1, Column: 1, Msg: err.Error()}
+			}
+			if _, ok := live[d.arg]; ok {
+				return nil, &LexError{File: display, Line: i + 1, Column: 1, Msg: fmt.Sprintf("#define %q は既に定義されています", d.arg)}
+			}
+			live[d.arg] = def
+			own = append(own, ownDef{line: i + 1, name: d.arg, def: def})
+		case dirIfdef, dirIfndef:
+			parent := st.curActive()
+			// live holds base plus this file's defines from earlier
+			// lines only, so line order is honored.
+			_, defined := live[d.arg]
+			met := defined == (d.kind == dirIfdef)
+			st.conds = append(st.conds, ppFrame{parentActive: parent, active: parent && met, taken: met})
+		case dirElse:
+			if len(st.conds) == condDepth {
+				return nil, &LexError{File: display, Line: i + 1, Column: 1, Msg: "対応する #ifdef のない #else です"}
+			}
+			top := &st.conds[len(st.conds)-1]
+			if top.elseSeen {
+				return nil, &LexError{File: display, Line: i + 1, Column: 1, Msg: "#else が重複しています"}
+			}
+			top.elseSeen = true
+			top.active = top.parentActive && !top.taken
+			active[i] = st.curActive()
+		case dirEndif:
+			if len(st.conds) == condDepth {
+				return nil, &LexError{File: display, Line: i + 1, Column: 1, Msg: "対応する #ifdef のない #endif です"}
+			}
+			st.conds = st.conds[:len(st.conds)-1]
+			active[i] = st.curActive()
+		case dirError:
+			if active[i] {
+				msg := d.arg
+				if msg == "" {
+					msg = "エラーが発生しました"
+				}
+				return nil, &LexError{File: display, Line: i + 1, Column: 1, Msg: msg}
+			}
+		}
+	}
+	if len(st.conds) != condDepth {
+		return nil, &LexError{File: display, Line: len(lines), Column: 1, Msg: "閉じられていない #ifdef があります"}
+	}
+
+	// Phase 2: lex live lines, substituting #define uses. A use sees
+	// defines from earlier lines only (base + own up to its line).
+	toks, err := Lex(strings.Join(blanked, "\n"))
+	if err != nil {
+		if le, ok := err.(*LexError); ok {
+			le.File = display
+			return nil, le
+		}
+		return nil, err
+	}
+	eff := make(map[string]ppDefine, len(base))
+	for k, v := range base {
+		eff[k] = v
+	}
+	oi := 0
+	for i := range toks {
+		for oi < len(own) && own[oi].line <= toks[i].Line {
+			eff[own[oi].name] = own[oi].def
+			oi++
+		}
+		if toks[i].Type == TokIdent && !(i > 0 && toks[i-1].Type == TokDot) {
+			if def, ok := eff[toks[i].Lit]; ok {
+				toks[i].Type = def.typ
+				toks[i].Lit = def.lit
+			}
+		}
+	}
+	byLine := map[int][]Token{}
+	for i := range toks {
+		if toks[i].Type == TokEOF {
+			continue
+		}
+		toks[i].File = display
+		byLine[toks[i].Line] = append(byLine[toks[i].Line], toks[i])
+	}
+
+	// Phase 3: sweep lines in order; publish own defines and splice
+	// active includes so children see exactly the earlier defines.
+	var out []Token
+	di := 0
+	for ln := 1; ln <= len(lines)+1; ln++ {
+		for di < len(own) && own[di].line < ln {
+			o := own[di]
+			if _, ok := st.defines[o.name]; ok {
+				return nil, &LexError{File: display, Line: o.line, Column: 1, Msg: fmt.Sprintf("#define %q は既に定義されています", o.name)}
+			}
+			st.defines[o.name] = o.def
+			di++
+		}
+		if ln <= len(lines) {
+			if d := dirs[ln-1]; d != nil && d.kind == dirInclude && active[ln-1] {
+				child, err := st.combineFile(d.arg, parentDir)
+				if err != nil {
+					return nil, err
+				}
+				for _, t := range child {
+					if t.Type == TokEOF {
+						continue
+					}
+					out = append(out, t)
+				}
+				out = append(out, Token{Type: TokNewline, Lit: "\n", File: display, Line: ln, Column: 1})
+				continue
+			}
+		}
+		out = append(out, byLine[ln]...)
+	}
+	out = append(out, Token{Type: TokEOF, File: display})
+	return out, nil
+}
+
+// dirKind classifies a preprocessor directive line.
+type dirKind int
+
+const (
+	dirInclude dirKind = iota + 1
+	dirDefine
+	dirIfdef
+	dirIfndef
+	dirElse
+	dirEndif
+	dirError
+)
+
+// directive is one parsed `#...` line: arg holds the include path,
+// define/ifdef name, or #error message; rest holds the #define value.
+type directive struct {
+	kind dirKind
+	arg  string
+	rest string
+}
+
+// parseDirective recognizes a whole-line directive. It returns nil when
+// the line holds normal code. Malformed directives are an error
+// (reported at the directive line).
+func parseDirective(line string) (*directive, error) {
+	trimmed := strings.TrimLeft(line, " \t")
+	if !strings.HasPrefix(trimmed, "#") {
+		return nil, nil
+	}
+	rest := strings.TrimLeft(trimmed[1:], " \t")
+	i := 0
+	for i < len(rest) && isDirectiveLetter(rest[i]) {
+		i++
+	}
+	word, tail := rest[:i], strings.TrimLeft(rest[i:], " \t")
+	// A sharp alone (`#`) or `# 123`: no directive word.
+	unknown := func() (*directive, error) {
+		return nil, fmt.Errorf("不明なディレクティブ %q です（#include/#define/#ifdef/#ifndef/#else/#endif/#error を使用してください）", "#"+word)
+	}
+	switch word {
+	case "include":
+		if !strings.HasPrefix(tail, "\"") {
+			return nil, fmt.Errorf("不正な #include ディレクティブです（#include \"file\" が必要です）")
+		}
+		end := strings.Index(tail[1:], "\"")
+		if end < 0 {
+			return nil, fmt.Errorf("不正な #include ディレクティブです（閉じクォートがありません）")
+		}
+		target := tail[1 : 1+end]
+		if tail := strings.Trim(tail[1+end+1:], " \t"); tail != "" {
+			return nil, fmt.Errorf("不正な #include ディレクティブです（末尾に %q があります）", tail)
+		}
+		if target == "" {
+			return nil, fmt.Errorf("不正な #include ディレクティブです（パスが空です）")
+		}
+		return &directive{kind: dirInclude, arg: target}, nil
+	case "define":
+		name, value := splitDirectiveArg(tail)
+		if !isDefineName(name) {
+			return nil, fmt.Errorf("不正な #define ディレクティブです（#define NAME 値 が必要です）")
+		}
+		if strings.TrimSpace(value) == "" {
+			return nil, fmt.Errorf("不正な #define ディレクティブです（#define NAME 値 が必要です）")
+		}
+		return &directive{kind: dirDefine, arg: name, rest: value}, nil
+	case "ifdef", "ifndef":
+		name, extra := splitDirectiveArg(tail)
+		if !isDefineName(name) || strings.TrimSpace(extra) != "" {
+			return nil, fmt.Errorf("不正な #%s ディレクティブです（#%s NAME が必要です）", word, word)
+		}
+		if word == "ifdef" {
+			return &directive{kind: dirIfdef, arg: name}, nil
+		}
+		return &directive{kind: dirIfndef, arg: name}, nil
+	case "else", "endif":
+		if strings.TrimSpace(tail) != "" {
+			return nil, fmt.Errorf("不正な #%s ディレクティブです（#%s の後に余分な文字があります）", word, word)
+		}
+		if word == "else" {
+			return &directive{kind: dirElse}, nil
+		}
+		return &directive{kind: dirEndif}, nil
+	case "error":
+		return &directive{kind: dirError, arg: strings.TrimSpace(tail)}, nil
+	}
+	return unknown()
+}
+
+func isDirectiveLetter(c byte) bool {
+	return 'A' <= c && c <= 'Z' || 'a' <= c && c <= 'z'
+}
+
+// splitDirectiveArg splits "NAME rest..." at the first blank.
+func splitDirectiveArg(s string) (name, rest string) {
+	if i := strings.IndexAny(s, " \t"); i >= 0 {
+		return s[:i], s[i+1:]
+	}
+	return s, ""
+}
+
+// isDefineName reports whether s is a valid preprocessor name.
+func isDefineName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '_' || 'A' <= c && c <= 'Z' || 'a' <= c && c <= 'z' || i > 0 && '0' <= c && c <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// parseDefineValue lexes a #define value: exactly one int/float/string/
+// bool literal, with an optional leading `-` for numbers.
+func parseDefineValue(value string) (ppDefine, error) {
+	bad := func() (ppDefine, error) {
+		return ppDefine{}, fmt.Errorf("不正な #define 値です（整数・小数・文字列・真偽値のリテラルを 1 つ指定してください）")
+	}
+	toks, err := Lex(value)
+	if err != nil {
+		return ppDefine{}, err
+	}
+	var body []Token
+	for _, t := range toks {
+		if t.Type != TokEOF {
+			body = append(body, t)
+		}
+	}
+	neg := false
+	if len(body) == 2 && body[0].Type == TokMinus && (body[1].Type == TokInt || body[1].Type == TokFloat) {
+		neg = true
+		body = body[1:]
+	}
+	if len(body) != 1 {
+		return bad()
+	}
+	switch body[0].Type {
+	case TokInt, TokFloat, TokString, TokTrue, TokFalse:
+		lit := body[0].Lit
+		if neg {
+			lit = "-" + lit
+		}
+		return ppDefine{typ: body[0].Type, lit: lit}, nil
+	}
+	return bad()
+}
+
+// resolveInclude finds path against parentDir, then the working directory.
+func resolveInclude(path, parentDir string) (string, error) {
+	if filepath.IsAbs(path) {
+		if _, err := os.Stat(path); err != nil {
+			return "", fmt.Errorf("#include %q を開けません：%s", path, err.Error())
+		}
+		return path, nil
+	}
+	cands := []string{}
+	if parentDir != "" {
+		cands = append(cands, filepath.Join(parentDir, path))
+	} else {
+		cands = append(cands, path)
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		if c := filepath.Join(cwd, path); c != cands[0] {
+			cands = append(cands, c)
+		}
+	}
+	for _, c := range cands {
+		if _, err := os.Stat(c); err == nil {
+			return c, nil
+		}
+	}
+	return "", fmt.Errorf("#include %q を開けません：ファイルが見つかりません", path)
+}
+
+// displayPath shortens absolute paths against the working directory.
+func displayPath(abs string) string {
+	if cwd, err := os.Getwd(); err == nil {
+		if rel, err := filepath.Rel(cwd, abs); err == nil && rel != "" && !strings.HasPrefix(rel, "..") {
+			return rel
+		}
+	}
+	return abs
+}

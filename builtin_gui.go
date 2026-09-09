@@ -1,0 +1,240 @@
+//go:build gui
+
+// GUI-only builtins (G1 drawing). Registered only in -tags gui builds;
+// console builds report these names as undefined functions.
+package main
+
+import (
+	"gou/gui"
+)
+
+// guiBE fetches the window backend or reports a clean error.
+func guiBE(in *Interp, at Pos, name string) (*gui.WindowBackend, error) {
+	wb, ok := in.Backend().(*gui.WindowBackend)
+	if !ok {
+		return nil, rtErrf(at, "%s は GUI ビルドが必要です", name)
+	}
+	return wb, nil
+}
+
+func init() {
+	// screen(w, h): resize the window and re-init the canvas.
+	register("screen", 2, 2, func(in *Interp, args []Value, at Pos) (Value, error) {
+		wb, err := guiBE(in, at, "screen")
+		if err != nil {
+			return Null(), err
+		}
+		w, err := needInt("screen", args, 0, at)
+		if err != nil {
+			return Null(), err
+		}
+		h, err := needInt("screen", args, 1, at)
+		if err != nil {
+			return Null(), err
+		}
+		if w <= 0 || h <= 0 {
+			return Null(), rtErrf(at, "screen のサイズは正の値である必要があります。%d x %d が指定されました", w, h)
+		}
+		wb.ResizeCanvas(int(w), int(h))
+		return Null(), nil
+	})
+
+	// width(w, h): alias of screen (window size).
+	register("width", 2, 2, func(in *Interp, args []Value, at Pos) (Value, error) {
+		wb, err := guiBE(in, at, "width")
+		if err != nil {
+			return Null(), err
+		}
+		w, err := needInt("width", args, 0, at)
+		if err != nil {
+			return Null(), err
+		}
+		h, err := needInt("width", args, 1, at)
+		if err != nil {
+			return Null(), err
+		}
+		if w <= 0 || h <= 0 {
+			return Null(), rtErrf(at, "width のサイズは正の値である必要があります。%d x %d が指定されました", w, h)
+		}
+		wb.ResizeCanvas(int(w), int(h))
+		return Null(), nil
+	})
+
+	// gsel(id): switch the draw buffer (0 = main, visible).
+	register("gsel", 1, 1, func(in *Interp, args []Value, at Pos) (Value, error) {
+		wb, err := guiBE(in, at, "gsel")
+		if err != nil {
+			return Null(), err
+		}
+		id, err := needInt("gsel", args, 0, at)
+		if err != nil {
+			return Null(), err
+		}
+		if err := wb.SelectTarget(int(id)); err != nil {
+			return Null(), rtErrf(at, "%s", err.Error())
+		}
+		return Null(), nil
+	})
+
+	// pset(x, y): one pixel in the current color.
+	register("pset", 2, 2, func(in *Interp, args []Value, at Pos) (Value, error) {
+		wb, err := guiBE(in, at, "pset")
+		if err != nil {
+			return Null(), err
+		}
+		x, err := needInt("pset", args, 0, at)
+		if err != nil {
+			return Null(), err
+		}
+		y, err := needInt("pset", args, 1, at)
+		if err != nil {
+			return Null(), err
+		}
+		wb.SetPixel(int(x), int(y), wb.Foreground())
+		return Null(), nil
+	})
+
+	// line(x1, y1, x2, y2): 1px line in the current color.
+	register("line", 4, 4, func(in *Interp, args []Value, at Pos) (Value, error) {
+		wb, err := guiBE(in, at, "line")
+		if err != nil {
+			return Null(), err
+		}
+		pts := make([]int, 4)
+		for i := range pts {
+			v, err := needInt("line", args, i, at)
+			if err != nil {
+				return Null(), err
+			}
+			pts[i] = int(v)
+		}
+		wb.StrokeLine(pts[0], pts[1], pts[2], pts[3], wb.Foreground())
+		return Null(), nil
+	})
+
+	// boxf(): filled fullscreen. boxf(x1, y1, x2, y2): filled rectangle (corners normalized).
+	register("boxf", 0, -1, func(in *Interp, args []Value, at Pos) (Value, error) {
+		wb, err := guiBE(in, at, "boxf")
+		if err != nil {
+			return Null(), err
+		}
+		if len(args) == 0 {
+			w, h := wb.CanvasSize()
+			wb.FillRect(0, 0, w, h, wb.Foreground())
+			return Null(), nil
+		}
+		if len(args) != 4 {
+			return Null(), rtErrf(at, "boxf は引数を 0 個または 4 個必要としますが、%d 個が渡されました", len(args))
+		}
+		pts := make([]int, 4)
+		for i := range pts {
+			v, err := needInt("boxf", args, i, at)
+			if err != nil {
+				return Null(), err
+			}
+			pts[i] = int(v)
+		}
+		x, w := normSpan(pts[0], pts[2])
+		y, h := normSpan(pts[1], pts[3])
+		wb.FillRect(x, y, w, h, wb.Foreground())
+		return Null(), nil
+	})
+
+	// circle(x, y, r [, fill]): circle in the current color.
+	register("circle", 3, 4, func(in *Interp, args []Value, at Pos) (Value, error) {
+		wb, err := guiBE(in, at, "circle")
+		if err != nil {
+			return Null(), err
+		}
+		x, err := needInt("circle", args, 0, at)
+		if err != nil {
+			return Null(), err
+		}
+		y, err := needInt("circle", args, 1, at)
+		if err != nil {
+			return Null(), err
+		}
+		r, err := needInt("circle", args, 2, at)
+		if err != nil {
+			return Null(), err
+		}
+		if r < 0 {
+			return Null(), argErr("circle", 2, at, "半径は 0 以上である必要があります。%d が指定されました", r)
+		}
+		fill := false
+		if len(args) == 4 {
+			f, err := needInt("circle", args, 3, at)
+			if err != nil {
+				return Null(), err
+			}
+			fill = f != 0
+		}
+		wb.Circle(int(x), int(y), int(r), fill, wb.Foreground())
+		return Null(), nil
+	})
+
+	// gcopy(src, sx, sy, w, h): blit a buffer region at the cursor.
+	register("gcopy", 5, 5, func(in *Interp, args []Value, at Pos) (Value, error) {
+		wb, err := guiBE(in, at, "gcopy")
+		if err != nil {
+			return Null(), err
+		}
+		nums := make([]int, 5)
+		for i := range nums {
+			v, err := needInt("gcopy", args, i, at)
+			if err != nil {
+				return Null(), err
+			}
+			nums[i] = int(v)
+		}
+		if nums[3] <= 0 || nums[4] <= 0 {
+			return Null(), rtErrf(at, "gcopy のサイズは正の値である必要があります。%d x %d が指定されました", nums[3], nums[4])
+		}
+		dx, dy := wb.CursorPixels()
+		if err := wb.Blit(nums[0], nums[1], nums[2], nums[3], nums[4], dx, dy); err != nil {
+			return Null(), rtErrf(at, "%s", err.Error())
+		}
+		return Null(), nil
+	})
+
+	// gmode(mode): 0 normal, 1 additive.
+	register("gmode", 1, 1, func(in *Interp, args []Value, at Pos) (Value, error) {
+		wb, err := guiBE(in, at, "gmode")
+		if err != nil {
+			return Null(), err
+		}
+		m, err := needInt("gmode", args, 0, at)
+		if err != nil {
+			return Null(), err
+		}
+		if err := wb.SetBlend(int(m)); err != nil {
+			return Null(), rtErrf(at, "%s", err.Error())
+		}
+		return Null(), nil
+	})
+
+	// picload(path): load an image into a new buffer, return its id.
+	register("picload", 1, 1, func(in *Interp, args []Value, at Pos) (Value, error) {
+		wb, err := guiBE(in, at, "picload")
+		if err != nil {
+			return Null(), err
+		}
+		p, err := needString("picload", args, 0, at)
+		if err != nil {
+			return Null(), err
+		}
+		id, err := wb.PicLoad(p)
+		if err != nil {
+			return Null(), rtErrf(at, "%s", err.Error())
+		}
+		return Int(int64(id)), nil
+	})
+
+}
+
+func normSpan(a, b int) (int, int) {
+	if a <= b {
+		return a, b - a
+	}
+	return b, a - b
+}

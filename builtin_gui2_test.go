@@ -1,0 +1,265 @@
+//go:build gui
+
+package main
+
+import (
+	"strings"
+	"testing"
+
+	"gou/gui"
+)
+
+// GUI builtin validation. A headless WindowBackend (no RunGame) serves
+// calls that never touch the GPU; live queries run in the gui pixel test.
+func guiEval(t *testing.T, src string) (Value, error) {
+	t.Helper()
+	prog, err := Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(prog.Stmts) != 1 {
+		t.Fatalf("want one statement, got %d", len(prog.Stmts))
+	}
+	es, ok := prog.Stmts[0].(*ExprStmt)
+	if !ok {
+		t.Fatalf("want ExprStmt, got %T", prog.Stmts[0])
+	}
+	wb, err := gui.New(320, 200)
+	if err != nil {
+		t.Skipf("system font unavailable: %v", err)
+	}
+	in := NewInterpWithBackend(wb, strings.NewReader(""))
+	return in.EvalGlobal(es.X)
+}
+
+func TestGuiBuiltinValidation(t *testing.T) {
+	if _, err := guiEval(t, "getkey(999)"); err == nil || !strings.Contains(err.Error(), "不明なキーコード") {
+		t.Fatalf("getkey(999): got %v", err)
+	}
+	// Extended keys are accepted (headless: nothing pressed).
+	for _, src := range []string{"getkey(8)", "getkey(9)", "getkey(16)", "getkey(17)", "getkey(18)", "getkey(33)", "getkey(46)", "getkey(112)", "getkey(123)", "getkey(186)", "getkey(222)"} {
+		v, err := guiEval(t, src)
+		if err != nil || v.K != KBool || v.B {
+			t.Fatalf("%s: got %v, %v (want false)", src, v, err)
+		}
+	}
+	if _, err := guiEval(t, "mmplay(999)"); err == nil || !strings.Contains(err.Error(), "不明なサウンド") {
+		t.Fatalf("mmplay(999): got %v", err)
+	}
+	if _, err := guiEval(t, "mmload(\"no-such-file.wav\")"); err == nil || !strings.Contains(err.Error(), "mmload") {
+		t.Fatalf("mmload missing: got %v", err)
+	}
+	if _, err := guiEval(t, "mmvol(9999, 50)"); err == nil {
+		t.Fatal("mmvol unknown should error")
+	}
+	if _, err := guiEval(t, "mmvol(1, 200)"); err == nil {
+		t.Fatal("mmvol out-of-range should error")
+	}
+	v, err := guiEval(t, "keyrep()")
+	if err != nil || v.K != KInt || v.I != 0 {
+		t.Fatalf("keyrep(): got %v, %v", v, err)
+	}
+	v, err = guiEval(t, "clicked()")
+	if err != nil || v.K != KBool || v.B {
+		t.Fatalf("clicked(): got %v, %v", v, err)
+	}
+	v, err = guiEval(t, "clicked(2)")
+	if err != nil || v.K != KBool || v.B {
+		t.Fatalf("clicked(2): got %v, %v", v, err)
+	}
+	if _, err := guiEval(t, "clicked(9)"); err == nil {
+		t.Fatal("clicked bad button should error")
+	}
+	v, err = guiEval(t, "cursor()")
+	if err != nil || v.K != KBool {
+		t.Fatalf("cursor(): got %v, %v", v, err)
+	}
+	if v, err := guiEval(t, "cursor(1)"); err != nil || v.K != KNull {
+		t.Fatalf("cursor(1): got %v, %v", v, err)
+	}
+	v, err = guiEval(t, "mousewheel()")
+	if err != nil || v.K != KInt || v.I != 0 {
+		t.Fatalf("mousewheel(): got %v, %v", v, err)
+	}
+	v, err = guiEval(t, "fullscreen()")
+	if err != nil || v.K != KBool {
+		t.Fatalf("fullscreen(): got %v, %v", v, err)
+	}
+	if _, err := guiEval(t, "fullscreen(\"x\")"); err == nil {
+		t.Fatal("fullscreen string should error")
+	}
+	v, err = guiEval(t, "closing()")
+	if err != nil || v.K != KBool || v.B {
+		t.Fatalf("closing(): got %v, %v", v, err)
+	}
+	v, err = guiEval(t, "screensize()")
+	if err != nil || v.K != KArray || len(v.Arr.Elems) != 3 {
+		t.Fatalf("screensize(): got %v, %v", v, err)
+	}
+	v, err = guiEval(t, "dropfiles()")
+	if err != nil || v.K != KArray || len(v.Arr.Elems) != 0 {
+		t.Fatalf("dropfiles(): got %v, %v", v, err)
+	}
+	if _, err := guiEval(t, "dropload(\"nope.png\")"); err == nil {
+		t.Fatal("dropload without drops should error")
+	}
+	if _, err := guiEval(t, "winmove(\"x\", 0)"); err == nil {
+		t.Fatal("winmove string should error")
+	}
+	v, err = guiEval(t, "padcount()")
+	if err != nil || v.K != KInt || v.I != 0 {
+		t.Fatalf("padcount(): got %v, %v", v, err)
+	}
+	if _, err := guiEval(t, "padbtn(0, 0)"); err == nil {
+		t.Fatal("padbtn without pads should error")
+	}
+	if _, err := guiEval(t, "padbtn(0, 99)"); err == nil {
+		t.Fatal("padbtn out-of-range button should error")
+	}
+	if _, err := guiEval(t, "padaxis(0, 9)"); err == nil {
+		t.Fatal("padaxis out-of-range axis should error")
+	}
+	if _, err := guiEval(t, "padname(0)"); err == nil {
+		t.Fatal("padname without pads should error")
+	}
+	v, err = guiEval(t, "touchcount()")
+	if err != nil || v.K != KInt || v.I != 0 {
+		t.Fatalf("touchcount(): got %v, %v", v, err)
+	}
+	if _, err := guiEval(t, "touchx(0)"); err == nil {
+		t.Fatal("touchx without touches should error")
+	}
+	if _, err := guiEval(t, "touchy(0)"); err == nil {
+		t.Fatal("touchy without touches should error")
+	}
+	v, err = guiEval(t, "mmstop()")
+	if err != nil || v.K != KNull {
+		t.Fatalf("mmstop(): got %v, %v", v, err)
+	}
+	v, err = guiEval(t, "stick()")
+	if err != nil || v.K != KInt {
+		t.Fatalf("stick(): got %v, %v", v, err)
+	}
+}
+
+func TestGuiWidgetValidation(t *testing.T) {
+	if _, err := guiEval(t, "dialog(\"x\", \"bogus\")"); err == nil {
+		t.Fatal("dialog bogus mode should error")
+	}
+	if _, err := guiEval(t, "pressed(99)"); err == nil {
+		t.Fatal("pressed unknown should error")
+	}
+	if _, err := guiEval(t, "gettext(99)"); err == nil {
+		t.Fatal("gettext unknown should error")
+	}
+	if _, err := guiEval(t, "selected(99)"); err == nil {
+		t.Fatal("selected unknown should error")
+	}
+	if _, err := guiEval(t, "clrobj(99)"); err == nil {
+		t.Fatal("clrobj unknown should error")
+	}
+	if _, err := guiEval(t, "button(1, \"x\", 0, 0, 0, 10)"); err == nil {
+		t.Fatal("button zero width should error")
+	}
+	// Argument order: (id, label, x, y, w, h). A string id must fail
+	// as arg 0 before anything blocks.
+	if _, err := guiEval(t, "button(\"x\", \"y\", 0, 0, 10, 10)"); err == nil {
+		t.Fatal("button string id should error")
+	}
+}
+
+func TestGuiFormValidation(t *testing.T) {
+	// chkbox sizes itself: the w/h form is gone (4-5 args). NOTE: guiEval
+	// never pumps the draw queue, so only pre-loop errors are asserted
+	// here; the success path is covered headless in TestFormWidgetsHeadless.
+	if _, err := guiEval(t, "chkbox(1, \"x\", 0, 0, 0, 10)"); err == nil {
+		t.Fatal("old 6-arg chkbox should error")
+	}
+	if _, err := guiEval(t, "chkbox(\"x\", \"y\", 0, 0)"); err == nil {
+		t.Fatal("chkbox string id should error")
+	}
+	if _, err := guiEval(t, "chkbox(1, 0, 0, 0)"); err == nil {
+		t.Fatal("chkbox non-string label should error")
+	}
+	if _, err := guiEval(t, "checked(99)"); err == nil {
+		t.Fatal("checked unknown should error")
+	}
+	if _, err := guiEval(t, "combox(1, 0, 0, 100, 30, [1])"); err == nil {
+		t.Fatal("combox non-string item should error")
+	}
+	if _, err := guiEval(t, "combox(1, 0, 0, 100, 30, [\"a\"], 5)"); err == nil {
+		t.Fatal("combox out-of-range sel should error")
+	}
+	if _, err := guiEval(t, "mesbox(1, 0, 0, 100, 0)"); err == nil {
+		t.Fatal("mesbox zero height should error")
+	}
+	if _, err := guiEval(t, "getstr(99)"); err == nil {
+		t.Fatal("getstr unknown should error")
+	}
+	if _, err := guiEval(t, "objprm(99, \"enable\", 1)"); err == nil {
+		t.Fatal("objprm unknown should error")
+	}
+	if _, err := guiEval(t, "objprm(1, \"bogus\", 1)"); err == nil {
+		t.Fatal("objprm bogus key should error")
+	}
+}
+
+func TestGuiDrawValidation(t *testing.T) {
+	if _, err := guiEval(t, "font(7)"); err == nil {
+		t.Fatal("font tiny size should error")
+	}
+	if _, err := guiEval(t, "font(65)"); err == nil {
+		t.Fatal("font huge size should error")
+	}
+	if _, err := guiEval(t, "font(\"x\")"); err == nil {
+		t.Fatal("font string size should error")
+	}
+	if v, err := guiEval(t, "font(24)"); err != nil || v.K != KNull {
+		t.Fatalf("font(24): got %v, %v", v, err)
+	}
+	if _, err := guiEval(t, "paint(-1, 0)"); err == nil {
+		t.Fatal("paint out-of-range seed should error")
+	}
+	if _, err := guiEval(t, "paint(\"x\", 0)"); err == nil {
+		t.Fatal("paint string x should error")
+	}
+	if v, err := guiEval(t, "paint(10, 10)"); err != nil || v.K != KNull {
+		t.Fatalf("paint(10, 10): got %v, %v", v, err)
+	}
+	if _, err := guiEval(t, "gzoom(99, 0, 0, 10, 10, 1, 1)"); err == nil {
+		t.Fatal("gzoom unknown buffer should error")
+	}
+	if _, err := guiEval(t, "gzoom(0, 0, 0, 10, 10, 0, 1)"); err == nil {
+		t.Fatal("gzoom zero scale should error")
+	}
+	if _, err := guiEval(t, "gzoom(0, \"x\", 0, 10, 10, 1, 1)"); err == nil {
+		t.Fatal("gzoom string arg should error")
+	}
+	if _, err := guiEval(t, "grotate(99, 0, 0, 10, 10, 30)"); err == nil {
+		t.Fatal("grotate unknown buffer should error")
+	}
+	if _, err := guiEval(t, "grotate(0, 0, 0, 10, 10, 30, 0)"); err == nil {
+		t.Fatal("grotate zero scale should error")
+	}
+	if _, err := guiEval(t, "grotate(0, \"x\", 0, 10, 10, 30)"); err == nil {
+		t.Fatal("grotate string arg should error")
+	}
+	if _, err := guiEval(t, "galpha(300)"); err == nil {
+		t.Fatal("galpha out-of-range should error")
+	}
+	if _, err := guiEval(t, "galpha(\"x\")"); err == nil {
+		t.Fatal("galpha string should error")
+	}
+	if v, err := guiEval(t, "galpha(128)"); err != nil || v.K != KNull {
+		t.Fatalf("galpha(128): got %v, %v", v, err)
+	}
+	if _, err := guiEval(t, "pngsave(\"\", 0)"); err == nil {
+		t.Fatal("pngsave empty path should error")
+	}
+	if _, err := guiEval(t, "pngsave(\"x.png\", 99)"); err == nil {
+		t.Fatal("pngsave bad id should error")
+	}
+	if _, err := guiEval(t, "pngsave(1, 0)"); err == nil {
+		t.Fatal("pngsave numeric path should error")
+	}
+}

@@ -1,0 +1,21 @@
+# built command binary (build with: go build -o gsh.exe .)
+gsh
+gsh.exe
+
+# packaged VS Code extension (rebuild with: npx @vscode/vsce package)
+*.vsix
+
+# Go test binaries and coverage
+*.test
+*.test.exe
+coverage.out
+__debug_bin*
+
+# pngsave() test artifacts
+draw_demo.png
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

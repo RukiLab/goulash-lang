@@ -1,0 +1,52 @@
+screen(640, 480)
+title("Goulash draw demo")
+
+color(40, 40, 120)
+boxf(0, 0, 640, 480)
+
+color(255, 255, 255)
+boxf(10, 10, 100, 60)
+
+color(255, 80, 80)
+line(0, 0, 640, 480)
+line(640, 0, 0, 480)
+
+color(80, 255, 120)
+circle(320, 240, 90, 1)
+
+color(255, 220, 80)
+circle(320, 240, 120)
+
+color(255, 60, 60)
+circle(520, 380, 40)
+paint(520, 380)
+
+gsel(1)
+color(0, 200, 200)
+boxf(0, 0, 60, 40)
+color(255, 255, 255)
+circle(30, 20, 15, 1)
+gsel(0)
+pos(0, 360)
+gzoom(1, 0, 0, 60, 40, 2, 2)
+
+pos(224, 280)
+grotate(1, 0, 0, 60, 40, 30)
+galpha(128)
+pos(224, 400)
+gcopy(1, 0, 0, 60, 40)
+galpha(255)
+
+font(28)
+color(255, 255, 255)
+pos(16, 40)
+mes("draw demo")
+font(16)
+mes("pset/line/boxf/circle OK")
+mes("paint/gzoom/grotate/galpha/font/pngsave OK")
+
+pngsave("draw_demo.png")
+mes("saved draw_demo.png")
+
+sleep(2500)
+end(0)

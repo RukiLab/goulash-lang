@@ -1,0 +1,789 @@
+//go:build gui
+
+package gui
+
+import (
+	"fmt"
+	"image"
+	"image/color"
+	"sync"
+
+	"github.com/ebitenui/ebitenui"
+	euimage "github.com/ebitenui/ebitenui/image"
+	"github.com/ebitenui/ebitenui/widget"
+	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/text/v2"
+)
+
+// Widgets (G3) on ebitenui: buttons, text inputs, lists, modal dialogs.
+// Script threads enqueue mutations; the game thread applies them.
+// HSP-style absolute positioning via fixedLayout.
+
+// fixedLayout places children at exact rectangles (HSP-like coordinates).
+type fixedLayout struct {
+	w, h  int
+	rects map[widget.PreferredSizeLocateableWidget]image.Rectangle
+}
+
+func (l *fixedLayout) PreferredSize(widgets []widget.PreferredSizeLocateableWidget) (int, int) {
+	return l.w, l.h
+}
+
+func (l *fixedLayout) Layout(widgets []widget.PreferredSizeLocateableWidget, rect image.Rectangle) {
+	for _, w := range widgets {
+		if r, ok := l.rects[w]; ok {
+			w.SetLocation(r)
+		}
+	}
+}
+
+type widgetKind int
+
+const (
+	wButton widgetKind = iota
+	wInput
+	wList
+	wCheck
+	wCombo
+	wArea
+)
+
+type widgetEntry struct {
+	id     int
+	kind   widgetKind
+	child  widget.PreferredSizeLocateableWidget
+	remove widget.RemoveChildFunc
+	// button latch + list state (guarded by backend mu).
+	pressed bool
+	items   []string
+	selIdx  int
+	input   *widget.TextInput
+	// cached mirrors the widget's text, refreshed on the game thread
+	// every Update so InputText never blocks the script (a blocking
+	// read mid-frame would stall cls/mes redraws and flicker).
+	cached string
+	// form widgets (G5): checkbox, combo, textarea mirrors.
+	check   *widget.Checkbox
+	combo   *widget.ListComboButton
+	area    *widget.TextArea
+	checked bool
+	list    *widget.List
+}
+
+// ensureUI builds the retained UI on the game thread.
+func (b *WindowBackend) ensureUI() {
+	if b.ui != nil {
+		return
+	}
+	b.mu.Lock()
+	w, h := b.w, b.h
+	b.mu.Unlock()
+	fix := &fixedLayout{w: w, h: h, rects: map[widget.PreferredSizeLocateableWidget]image.Rectangle{}}
+	root := widget.NewContainer(widget.ContainerOpts.Layout(fix))
+	b.fixLayout = fix
+	b.root = root
+	b.widgets = map[int]*widgetEntry{}
+	b.ui = &ebitenui.UI{Container: root}
+}
+
+// placeChild adds a child at an absolute rect on the game thread.
+func (b *WindowBackend) placeChild(id int, e *widgetEntry, child widget.PreferredSizeLocateableWidget, x, y, w, h int) {
+	b.ensureUI()
+	if old, ok := b.widgets[id]; ok {
+		old.remove()
+		delete(b.fixLayout.rects, old.child)
+	}
+	b.root.AddChild(child)
+	b.fixLayout.rects[child] = image.Rect(x, y, x+w, y+h)
+	remove := func() {
+		b.root.RemoveChild(child)
+		delete(b.fixLayout.rects, child)
+	}
+	e.child = child
+	e.remove = remove
+	b.widgets[id] = e
+	b.root.RequestRelayout()
+}
+
+// removeWidgetLocked drops a widget; caller runs on the game thread.
+func (b *WindowBackend) removeWidgetLocked(id int) error {
+	e, ok := b.widgets[id]
+	if !ok {
+		return fmt.Errorf("不明なウィジェット %d です", id)
+	}
+	e.remove()
+	delete(b.widgets, id)
+	return nil
+}
+
+// ---------- theme (plain dark) ----------
+
+func nine(c color.NRGBA) *euimage.NineSlice {
+	return euimage.NewNineSliceColor(c)
+}
+
+// uiFace adapts our face to ebitenui's *text.Face (pointer to interface).
+// The face swaps on font(), so read it under mu.
+func (b *WindowBackend) uiFace() *text.Face {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	f := text.Face(b.face)
+	return &f
+}
+
+func (b *WindowBackend) buttonImage() *widget.ButtonImage {
+	idle := nine(color.NRGBA{0x3A, 0x3F, 0x4A, 0xFF})
+	return &widget.ButtonImage{
+		Idle: idle, Hover: nine(color.NRGBA{0x4A, 0x50, 0x5C, 0xFF}),
+		Pressed: nine(color.NRGBA{0x2A, 0x2E, 0x36, 0xFF}), Disabled: idle,
+	}
+}
+
+func (b *WindowBackend) inputImage() *widget.TextInputImage {
+	idle := nine(color.NRGBA{0x22, 0x26, 0x2E, 0xFF})
+	return &widget.TextInputImage{Idle: idle, Disabled: idle}
+}
+
+// checkBoxSize is the checkbox art edge length, tracking font().
+// Even and >= 12 so the nine-slice faces below reassemble pixel-perfect.
+func (b *WindowBackend) checkBoxSize() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s := int(b.fontSize*1.25 + 0.5)
+	if s < 12 {
+		s = 12
+	}
+	if s > 48 {
+		s = 48
+	}
+	return s &^ 1
+}
+
+// checkArtRGBA renders one size×size checkbox face into plain pixels:
+// solid body with an optional check glyph. Pure Go, so tests can
+// inspect the art without a game loop.
+func checkArtRGBA(size int, body color.NRGBA, check bool, mark color.NRGBA) *image.NRGBA {
+	img := image.NewNRGBA(image.Rect(0, 0, size, size))
+	for y := 0; y < size; y++ {
+		for x := 0; x < size; x++ {
+			img.SetNRGBA(x, y, body)
+		}
+	}
+	if check {
+		drawCheckMark(img, size, mark)
+	}
+	return img
+}
+
+// checkArt uploads one checkbox face. Created on the game thread
+// (like all images; ebiten.NewImage also works headless in tests).
+func checkArt(size int, body color.NRGBA, check bool, mark color.NRGBA) *ebiten.Image {
+	return ebiten.NewImageFromImage(checkArtRGBA(size, body, check, mark))
+}
+
+// drawCheckMark paints a check from (0.28,0.55)->(0.45,0.72)->(0.74,0.30)
+// with a square brush, so the checked state reads at any box size.
+func drawCheckMark(img *image.NRGBA, size int, c color.NRGBA) {
+	f := float64(size)
+	pts := [][2]float64{{0.28 * f, 0.55 * f}, {0.45 * f, 0.72 * f}, {0.74 * f, 0.30 * f}}
+	r := size / 8
+	if r < 1 {
+		r = 1
+	}
+	dot := func(x, y int) {
+		for dy := -r; dy <= r; dy++ {
+			for dx := -r; dx <= r; dx++ {
+				img.SetNRGBA(x+dx, y+dy, c)
+			}
+		}
+	}
+	for i := 0; i+1 < len(pts); i++ {
+		x0, y0, x1, y1 := pts[i][0], pts[i][1], pts[i+1][0], pts[i+1][1]
+		dx, dy := x1-x0, y1-y0
+		steps := int(absf(dx) + absf(dy) + 1)
+		for s := 0; s <= steps; s++ {
+			t := float64(s) / float64(steps)
+			dot(int(x0+dx*t+0.5), int(y0+dy*t+0.5))
+		}
+	}
+}
+
+func absf(v float64) float64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+// checkImage builds the checkbox faces with a real minimum size
+// (checked = filled theme blue + check glyph).
+//
+// NOTE: solid-color nine slices (NewNineSliceColor) report MinSize 0,
+// and ebitenui draws the *labeled* box at checkboxPreferredSize, so the
+// old faces rendered 0x0 (invisible box, label text only). Sized art
+// reassembles pixel-perfect at MinSize == size and fixes it.
+func (b *WindowBackend) checkImage() *widget.CheckboxImage {
+	s := b.checkBoxSize()
+	half := s / 2
+	mk := func(body color.NRGBA, check bool, mark color.NRGBA) *euimage.NineSlice {
+		return euimage.NewNineSliceSimple(checkArt(s, body, check, mark), half, 0)
+	}
+	box := color.NRGBA{0x22, 0x26, 0x2E, 0xFF}
+	boxHover := color.NRGBA{0x33, 0x39, 0x45, 0xFF}
+	boxDis := color.NRGBA{0x1A, 0x1D, 0x24, 0xFF}
+	fill := color.NRGBA{0x2D, 0x4A, 0x7A, 0xFF}
+	fillHover := color.NRGBA{0x3A, 0x5C, 0x96, 0xFF}
+	white := color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}
+	grey := color.NRGBA{0x77, 0x77, 0x77, 0xFF}
+	return &widget.CheckboxImage{
+		Unchecked:         mk(box, false, white),
+		UncheckedHovered:  mk(boxHover, false, white),
+		UncheckedDisabled: mk(boxDis, false, grey),
+		Checked:           mk(fill, true, white),
+		CheckedHovered:    mk(fillHover, true, white),
+		CheckedDisabled:   mk(boxDis, true, grey),
+	}
+}
+
+// listEntryColors defines every list state. Press/hover backgrounds must
+// never stay nil (transparent): with SelectPressed the entry is selected
+// on press, and a nil Pressed background would hide the highlight until
+// mouse release even though selected() already flipped.
+func listEntryColors() *widget.ListEntryColor {
+	return &widget.ListEntryColor{
+		Unselected:                 color.NRGBA{0xDD, 0xDD, 0xDD, 0xFF},
+		Selected:                   color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF},
+		DisabledUnselected:         color.NRGBA{0x77, 0x77, 0x77, 0xFF},
+		DisabledSelected:           color.NRGBA{0x99, 0x99, 0x99, 0xFF},
+		SelectingBackground:        color.NRGBA{0x2D, 0x4A, 0x7A, 0xFF},
+		SelectedBackground:         color.NRGBA{0x2D, 0x4A, 0x7A, 0xFF},
+		FocusedBackground:          color.NRGBA{0x33, 0x39, 0x45, 0xFF},
+		SelectingFocusedBackground: color.NRGBA{0x2D, 0x4A, 0x7A, 0xFF},
+		SelectedFocusedBackground:  color.NRGBA{0x3A, 0x5C, 0x96, 0xFF},
+		DisabledSelectedBackground: color.NRGBA{0x22, 0x26, 0x30, 0xFF},
+	}
+}
+
+// ---------- script-thread API (mutations block until applied) ----------
+
+// AddButton creates (or replaces) a button. imgs holds up to 4
+// picload/dropload buffer ids for the Idle/Hover/Pressed/Disabled
+// states (0 = slot unused): missing Hover/Pressed fall back to Idle,
+// missing Disabled falls back to a darkened Idle.
+func (b *WindowBackend) AddButton(id int, label string, x, y, w, h int, imgs ...int) error {
+	if w <= 0 || h <= 0 {
+		return fmt.Errorf("button のサイズは正の値である必要があります。%d x %d が指定されました", w, h)
+	}
+	if len(imgs) > 4 {
+		return fmt.Errorf("button：画像は最大 4 個（通常/ホバー/押下/無効）です。%d 個が指定されました", len(imgs))
+	}
+	for _, imgID := range imgs {
+		if imgID != 0 && !b.hasBuf(imgID) {
+			return fmt.Errorf("button：不明な画像バッファ %d です", imgID)
+		}
+	}
+	var opErr error
+	b.runOnLoop(func() {
+		face := b.uiFace()
+		e := &widgetEntry{id: id, kind: wButton, selIdx: -1}
+		opts := []widget.ButtonOpt{
+			widget.ButtonOpts.Image(b.buttonImage()),
+			widget.ButtonOpts.TextPadding(widget.NewInsetsSimple(4)),
+			widget.ButtonOpts.ClickedHandler(func(args *widget.ButtonClickedEventArgs) {
+				b.mu.Lock()
+				e.pressed = true
+				b.mu.Unlock()
+			}),
+		}
+		if label != "" {
+			opts = append(opts, widget.ButtonOpts.Text(label, face, &widget.ButtonTextColor{
+				Idle: color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF},
+			}))
+		}
+		if len(imgs) > 0 && imgs[0] != 0 {
+			srcs := make([]*ebiten.Image, 4)
+			for i, imgID := range imgs {
+				if imgID == 0 {
+					continue
+				}
+				src := b.targets[imgID]
+				if src == nil {
+					opErr = fmt.Errorf("button：画像バッファ %d はまだ準備できていません", imgID)
+					return
+				}
+				srcs[i] = src
+			}
+			idle := srcs[0]
+			hover := srcs[1]
+			if hover == nil {
+				hover = idle
+			}
+			pressed := srcs[2]
+			if pressed == nil {
+				pressed = idle
+			}
+			disabled := srcs[3]
+			if disabled == nil {
+				disabled = dimImage(idle)
+			}
+			opts = append(opts, widget.ButtonOpts.Graphic(&widget.GraphicImage{
+				Idle: idle, Hover: hover, Pressed: pressed, Disabled: disabled,
+			}))
+		}
+		b.placeChild(id, e, widget.NewButton(opts...), x, y, w, h)
+	})
+	return opErr
+}
+
+// dimImage returns a darkened copy for the Disabled state.
+// Call on the game thread (creates an image).
+func dimImage(src *ebiten.Image) *ebiten.Image {
+	w, h := src.Bounds().Dx(), src.Bounds().Dy()
+	out := ebiten.NewImage(w, h)
+	op := &ebiten.DrawImageOptions{}
+	op.ColorScale.Scale(0.45, 0.45, 0.45, 1)
+	out.DrawImage(src, op)
+	return out
+}
+
+// Pressed reports a click since the last call (consumed).
+func (b *WindowBackend) Pressed(id int) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e, ok := b.widgets[id]
+	if !ok || e.kind != wButton {
+		return false, fmt.Errorf("pressed：不明なボタン %d です", id)
+	}
+	p := e.pressed
+	e.pressed = false
+	return p, nil
+}
+
+// AddInput creates (or replaces) a text input.
+func (b *WindowBackend) AddInput(id, x, y, w, h int, text string) error {
+	if w <= 0 || h <= 0 {
+		return fmt.Errorf("inputbox のサイズは正の値である必要があります。%d x %d が指定されました", w, h)
+	}
+	b.runOnLoop(func() {
+		face := b.uiFace()
+		white := color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}
+		ti := widget.NewTextInput(
+			widget.TextInputOpts.Face(face),
+			widget.TextInputOpts.Image(b.inputImage()),
+			widget.TextInputOpts.Color(&widget.TextInputColor{
+				Idle: white, Disabled: white, Caret: white, DisabledCaret: white,
+			}),
+			widget.TextInputOpts.Padding(widget.NewInsetsSimple(4)),
+			widget.TextInputOpts.Placeholder(""),
+		)
+		ti.SetText(text)
+		e := &widgetEntry{id: id, kind: wInput, selIdx: -1, input: ti, cached: text}
+		b.placeChild(id, e, ti, x, y, w, h)
+	})
+	return nil
+}
+
+// syncWidgetCache mirrors widget runtime state (game thread only;
+// called from Update). Script reads use the mirrors so getters never
+// block the script mid-frame (cf. the gettext flicker fix).
+func (b *WindowBackend) syncWidgetCache() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, e := range b.widgets {
+		switch {
+		case e.kind == wInput && e.input != nil:
+			e.cached = e.input.GetText()
+		case e.kind == wArea && e.area != nil:
+			e.cached = e.area.GetText()
+		case e.kind == wCheck && e.check != nil:
+			e.checked = e.check.State() == widget.WidgetChecked
+		case e.kind == wCombo && e.combo != nil:
+			sel := e.combo.SelectedEntry()
+			e.selIdx = -1
+			for i, s := range e.items {
+				if s == sel {
+					e.selIdx = i
+					break
+				}
+			}
+		}
+	}
+}
+
+// InputText returns the current input content (script-thread safe,
+// never blocks: it reads the Update-time mirror).
+func (b *WindowBackend) InputText(id int) (string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e, ok := b.widgets[id]
+	if !ok || e.kind != wInput || e.input == nil {
+		return "", fmt.Errorf("gettext：不明な inputbox %d です", id)
+	}
+	return e.cached, nil
+}
+
+// AddList creates (or replaces) a list box.
+func (b *WindowBackend) AddList(id, x, y, w, h int, items []string) error {
+	if w <= 0 || h <= 0 {
+		return fmt.Errorf("listbox のサイズは正の値である必要があります。%d x %d が指定されました", w, h)
+	}
+	entries := make([]any, len(items))
+	for i, s := range items {
+		entries[i] = s
+	}
+	b.runOnLoop(func() {
+		face := b.uiFace()
+		e := &widgetEntry{id: id, kind: wList, selIdx: -1}
+		e.items = append([]string(nil), items...)
+		list := widget.NewList(
+			widget.ListOpts.ContainerOpts(widget.ContainerOpts.BackgroundImage(
+				nine(color.NRGBA{0x1A, 0x1D, 0x24, 0xFF}))),
+			widget.ListOpts.ScrollContainerImage(&widget.ScrollContainerImage{
+				Idle: nine(color.NRGBA{0x1A, 0x1D, 0x24, 0xFF}),
+				Mask: nine(color.NRGBA{0x1A, 0x1D, 0x24, 0xFF}),
+			}),
+			widget.ListOpts.HideHorizontalSlider(),
+			widget.ListOpts.HideVerticalSlider(),
+			// Select on press (not release): native listboxes highlight
+			// the instant the button goes down; release-to-select
+			// feels like a laggy click.
+			widget.ListOpts.SelectPressed(),
+			widget.ListOpts.Entries(entries),
+			widget.ListOpts.EntryLabelFunc(func(en any) string {
+				if s, ok := en.(string); ok {
+					return s
+				}
+				return ""
+			}),
+			widget.ListOpts.EntryFontFace(face),
+			widget.ListOpts.EntryColor(listEntryColors()),
+			widget.ListOpts.EntryTextPadding(widget.NewInsetsSimple(2)),
+			widget.ListOpts.EntrySelectedHandler(func(args *widget.ListEntrySelectedEventArgs) {
+				b.mu.Lock()
+				e.selIdx = -1
+				for i, s := range e.items {
+					if s == args.Entry {
+						e.selIdx = i
+						break
+					}
+				}
+				b.mu.Unlock()
+			}),
+		)
+		b.placeChild(id, e, list, x, y, w, h)
+		e.list = list
+	})
+	return nil
+}
+
+// SelectedIndex returns the list/combo selection (-1 when none).
+func (b *WindowBackend) SelectedIndex(id int) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e, ok := b.widgets[id]
+	if !ok || (e.kind != wList && e.kind != wCombo) {
+		return 0, fmt.Errorf("selected：不明な listbox %d です", id)
+	}
+	return e.selIdx, nil
+}
+
+// AddCheck creates (or replaces) a checkbox. Non-positive w/h fall back
+// to the preferred size (box + label), since the box art no longer
+// scales with the layout rect.
+func (b *WindowBackend) AddCheck(id int, label string, x, y, w, h int, checked bool) error {
+	b.runOnLoop(func() {
+		face := b.uiFace()
+		white := color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}
+		grey := color.NRGBA{0x77, 0x77, 0x77, 0xFF}
+		init := widget.WidgetUnchecked
+		if checked {
+			init = widget.WidgetChecked
+		}
+		cb := widget.NewCheckbox(
+			widget.CheckboxOpts.Image(b.checkImage()),
+			widget.CheckboxOpts.Text(label, face, &widget.LabelColor{Idle: white, Disabled: grey}),
+			widget.CheckboxOpts.Spacing(6),
+			widget.CheckboxOpts.InitialState(init),
+		)
+		// Validate now (fail fast): PreferredSize needs computedParams,
+		// which ebitenui otherwise fills lazily on first UI update.
+		cb.Validate()
+		if pw, ph := cb.PreferredSize(); w <= 0 || h <= 0 {
+			if w <= 0 {
+				w = pw
+			}
+			if h <= 0 {
+				h = ph
+			}
+		}
+		e := &widgetEntry{id: id, kind: wCheck, selIdx: -1, check: cb, checked: checked}
+		b.placeChild(id, e, cb, x, y, w, h)
+	})
+	return nil
+}
+
+// Checked reports a checkbox state (script-thread safe, never blocks:
+// it reads the Update-time mirror).
+func (b *WindowBackend) Checked(id int) (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e, ok := b.widgets[id]
+	if !ok || e.kind != wCheck {
+		return false, fmt.Errorf("checked：不明な checkbox %d です", id)
+	}
+	return e.checked, nil
+}
+
+// comboSliderParams images the dropdown scrollbar. The handle reuses
+// the button face so it stays visible at any theme.
+func comboSliderParams() *widget.SliderParams {
+	track := nine(color.NRGBA{0x1A, 0x1D, 0x24, 0xFF})
+	idle := nine(color.NRGBA{0x4A, 0x50, 0x5C, 0xFF})
+	hover := nine(color.NRGBA{0x5A, 0x60, 0x6E, 0xFF})
+	pressed := nine(color.NRGBA{0x2A, 0x2E, 0x36, 0xFF})
+	return &widget.SliderParams{
+		TrackImage: &widget.SliderTrackImage{Idle: track, Hover: track, Disabled: track},
+		HandleImage: &widget.ButtonImage{
+			Idle: idle, Hover: hover, Pressed: pressed, Disabled: idle,
+		},
+	}
+}
+
+// AddCombo creates (or replaces) a dropdown list. sel is the initial
+// index (-1 for none).
+func (b *WindowBackend) AddCombo(id, x, y, w, h int, items []string, sel int) error {
+	if w <= 0 || h <= 0 {
+		return fmt.Errorf("combox のサイズは正の値である必要があります。%d x %d が指定されました", w, h)
+	}
+	if sel < -1 || sel >= len(items) {
+		return fmt.Errorf("combox：選択 %d は範囲外です（%d 項目）", sel, len(items))
+	}
+	entries := make([]any, len(items))
+	for i, s := range items {
+		entries[i] = s
+	}
+	b.runOnLoop(func() {
+		face := b.uiFace()
+		white := color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}
+		pressed := true
+		e := &widgetEntry{id: id, kind: wCombo, selIdx: -1}
+		e.items = append([]string(nil), items...)
+		labelOf := func(en any) string {
+			if s, ok := en.(string); ok {
+				return s
+			}
+			return ""
+		}
+		cb := widget.NewListComboButton(
+			widget.ListComboButtonOpts.ButtonParams(&widget.ButtonParams{
+				Image:       b.buttonImage(),
+				TextColor:   &widget.ButtonTextColor{Idle: white},
+				TextPadding: widget.NewInsetsSimple(4),
+				TextFace:    face,
+			}),
+			widget.ListComboButtonOpts.ListParams(&widget.ListParams{
+				EntryFace:        face,
+				EntryColor:       listEntryColors(),
+				EntryTextPadding: widget.NewInsetsSimple(2),
+				SelectPressed:    &pressed,
+				ScrollContainerImage: &widget.ScrollContainerImage{
+					Idle: nine(color.NRGBA{0x1A, 0x1D, 0x24, 0xFF}),
+					Mask: nine(color.NRGBA{0x1A, 0x1D, 0x24, 0xFF}),
+				},
+				// The dropdown keeps its vertical slider: without images
+				// the slider handle button renders with a nil Image and
+				// panics on open (Button.draw dereferences Image.Idle).
+				Slider: comboSliderParams(),
+			}),
+			widget.ListComboButtonOpts.Text(face, nil, &widget.ButtonTextColor{Idle: white}),
+			widget.ListComboButtonOpts.Entries(entries),
+			widget.ListComboButtonOpts.EntryLabelFunc(labelOf, labelOf),
+			widget.ListComboButtonOpts.EntrySelectedHandler(func(args *widget.ListComboButtonEntrySelectedEventArgs) {
+				b.mu.Lock()
+				e.selIdx = -1
+				for i, s := range e.items {
+					if s == args.Entry {
+						e.selIdx = i
+						break
+					}
+				}
+				b.mu.Unlock()
+			}),
+			widget.ListComboButtonOpts.MaxContentHeight(h*4),
+		)
+		if sel >= 0 {
+			cb.SetSelectedEntry(entries[sel])
+			e.selIdx = sel
+		}
+		e.combo = cb
+		b.placeChild(id, e, cb, x, y, w, h)
+	})
+	return nil
+}
+
+// AddArea creates (or replaces) a multiline text box.
+func (b *WindowBackend) AddArea(id, x, y, w, h int, text string) error {
+	if w <= 0 || h <= 0 {
+		return fmt.Errorf("mesbox のサイズは正の値である必要があります。%d x %d が指定されました", w, h)
+	}
+	b.runOnLoop(func() {
+		face := b.uiFace()
+		white := color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}
+		ta := widget.NewTextArea(
+			widget.TextAreaOpts.ContainerOpts(widget.ContainerOpts.BackgroundImage(
+				nine(color.NRGBA{0x22, 0x26, 0x2E, 0xFF}))),
+			widget.TextAreaOpts.ScrollContainerImage(&widget.ScrollContainerImage{
+				Idle: nine(color.NRGBA{0x1A, 0x1D, 0x24, 0xFF}),
+				Mask: nine(color.NRGBA{0x1A, 0x1D, 0x24, 0xFF}),
+			}),
+			widget.TextAreaOpts.FontFace(face),
+			widget.TextAreaOpts.FontColor(white),
+			widget.TextAreaOpts.TextPadding(*widget.NewInsetsSimple(4)),
+			widget.TextAreaOpts.Text(text),
+		)
+		e := &widgetEntry{id: id, kind: wArea, selIdx: -1, area: ta, cached: text}
+		b.placeChild(id, e, ta, x, y, w, h)
+	})
+	return nil
+}
+
+// AreaText returns the multiline box content (script-thread safe,
+// never blocks: it reads the Update-time mirror).
+func (b *WindowBackend) AreaText(id int) (string, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e, ok := b.widgets[id]
+	if !ok || e.kind != wArea || e.area == nil {
+		return "", fmt.Errorf("getstr：不明な mesbox %d です", id)
+	}
+	return e.cached, nil
+}
+
+// SetEnabled toggles widget interactivity; applied on the game thread.
+func (b *WindowBackend) SetEnabled(id int, on bool) error {
+	b.mu.Lock()
+	_, ok := b.widgets[id]
+	b.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("objprm：不明なウィジェット %d です", id)
+	}
+	b.runOnLoop(func() {
+		if e, ok := b.widgets[id]; ok && e.child != nil {
+			e.child.GetWidget().Disabled = !on
+		}
+	})
+	return nil
+}
+
+// RemoveWidget drops one widget.
+func (b *WindowBackend) RemoveWidget(id int) error {
+	b.mu.Lock()
+	_, ok := b.widgets[id]
+	b.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("不明なウィジェット %d です", id)
+	}
+	var opErr error
+	b.runOnLoop(func() {
+		opErr = b.removeWidgetLocked(id)
+	})
+	return opErr
+}
+
+// ClearWidgets drops all widgets.
+func (b *WindowBackend) ClearWidgets() {
+	b.runOnLoop(func() {
+		for id := range b.widgets {
+			_ = b.removeWidgetLocked(id)
+		}
+	})
+}
+
+// HasWidget reports registry presence (tests).
+func (b *WindowBackend) HasWidget(id int) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	_, ok := b.widgets[id]
+	return ok
+}
+
+// Dialog shows a modal choice and blocks until answered.
+// mode: "ok" -> 1, "okcancel" -> 1/0, "yesno" -> 1/0.
+func (b *WindowBackend) Dialog(msg, mode string) (int, error) {
+	var labels []string
+	var values []int
+	switch mode {
+	case "ok":
+		labels, values = []string{"OK"}, []int{1}
+	case "okcancel":
+		labels, values = []string{"OK", "Cancel"}, []int{1, 0}
+	case "yesno":
+		labels, values = []string{"Yes", "No"}, []int{1, 0}
+	default:
+		return 0, fmt.Errorf("dialog：不明なモード %q です（ok/okcancel/yesno が必要です）", mode)
+	}
+	result := make(chan int, 1)
+	var once sync.Once
+	finish := func(v int) {
+		once.Do(func() { result <- v })
+	}
+	b.runOnLoop(func() {
+		b.ensureUI()
+		face := b.uiFace()
+		white := color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}
+		inner := widget.NewContainer(
+			widget.ContainerOpts.BackgroundImage(nine(color.NRGBA{0x26, 0x2B, 0x34, 0xFF})),
+			widget.ContainerOpts.Layout(widget.NewRowLayout(
+				widget.RowLayoutOpts.Direction(widget.DirectionVertical),
+				widget.RowLayoutOpts.Spacing(12),
+				widget.RowLayoutOpts.Padding(widget.NewInsetsSimple(16)))),
+		)
+		inner.AddChild(widget.NewLabel(
+			widget.LabelOpts.Text(msg, face, &widget.LabelColor{Idle: white}),
+		))
+		btnRow := widget.NewContainer(
+			widget.ContainerOpts.Layout(widget.NewRowLayout(
+				widget.RowLayoutOpts.Direction(widget.DirectionHorizontal),
+				widget.RowLayoutOpts.Spacing(12))),
+		)
+		win := widget.NewWindow(
+			widget.WindowOpts.Contents(inner),
+			widget.WindowOpts.Modal(),
+			widget.WindowOpts.ClosedHandler(func(args *widget.WindowClosedEventArgs) {
+				finish(0)
+			}),
+		)
+		remove := b.ui.AddWindow(win)
+		for i, lab := range labels {
+			v := values[i]
+			btnRow.AddChild(widget.NewButton(
+				widget.ButtonOpts.Image(b.buttonImage()),
+				widget.ButtonOpts.Text(lab, face, &widget.ButtonTextColor{Idle: white}),
+				widget.ButtonOpts.TextPadding(widget.NewInsetsSimple(6)),
+				widget.ButtonOpts.ClickedHandler(func(args *widget.ButtonClickedEventArgs) {
+					remove()
+					finish(v)
+				}),
+			))
+		}
+		inner.AddChild(btnRow)
+		bw, bh := 380, 170
+		b.mu.Lock()
+		ww, wh := b.w, b.h
+		b.mu.Unlock()
+		win.SetLocation(rectCentered(ww, wh, bw, bh))
+	})
+	return <-result, nil
+}
+
+func rectCentered(ww, wh, bw, bh int) image.Rectangle {
+	x := (ww - bw) / 2
+	if x < 0 {
+		x = 0
+	}
+	y := (wh - bh) / 2
+	if y < 0 {
+		y = 0
+	}
+	return image.Rect(x, y, x+bw, y+bh)
+}
