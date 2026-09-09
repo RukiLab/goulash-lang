@@ -123,6 +123,19 @@ func nine(c color.NRGBA) *euimage.NineSlice {
 	return euimage.NewNineSliceColor(c)
 }
 
+// nineImage stretches src across the widget (pure-stretch nine-slice,
+// zero borders). Snapshots are already button-sized, so it is exact.
+func nineImage(src *ebiten.Image) *euimage.NineSlice {
+	w, h := src.Bounds().Dx(), src.Bounds().Dy()
+	if w <= 0 {
+		w = 1
+	}
+	if h <= 0 {
+		h = 1
+	}
+	return euimage.NewNineSlice(src, [3]int{0, w, 0}, [3]int{0, h, 0})
+}
+
 // uiFace adapts our face to ebitenui's *text.Face (pointer to interface).
 // The face swaps on font(), so read it under mu.
 func (b *WindowBackend) uiFace() *text.Face {
@@ -338,12 +351,22 @@ func (b *WindowBackend) AddButton(id int, label string, x, y, w, h int, imgs ...
 			if disabled == nil {
 				disabled = dimImage(idle)
 			}
-			// NOTE: ebitenui swaps graphic images by state only for
-			// buttons built with TextAndImage (separate Text+Graphic
-			// opts leave the icon frozen on Idle).
-			opts = append(opts, widget.ButtonOpts.TextAndImage(label, face, &widget.GraphicImage{
-				Idle: idle, Hover: hover, Pressed: pressed, Disabled: disabled,
-			}, &widget.ButtonTextColor{Idle: white}))
+			if label != "" {
+				// Labeled: the icon row is centered by design, and
+				// TextAndImage enables ebitenui's per-state swap
+				// (separate Text+Graphic opts leave it frozen).
+				opts = append(opts, widget.ButtonOpts.TextAndImage(label, face, &widget.GraphicImage{
+					Idle: idle, Hover: hover, Pressed: pressed, Disabled: disabled,
+				}, &widget.ButtonTextColor{Idle: white}))
+			} else {
+				// Icon-only: state faces fill the button exactly.
+				// (A Graphic row would add an empty-text member and
+				// shift the icon a few pixels off center.)
+				opts = append(opts, widget.ButtonOpts.Image(&widget.ButtonImage{
+					Idle: nineImage(idle), Hover: nineImage(hover),
+					Pressed: nineImage(pressed), Disabled: nineImage(disabled),
+				}))
+			}
 		} else if label != "" {
 			opts = append(opts, widget.ButtonOpts.Text(label, face, &widget.ButtonTextColor{
 				Idle: white,

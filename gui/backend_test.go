@@ -122,6 +122,43 @@ func TestCaretPixelsHeadless(t *testing.T) {
 	}
 }
 
+func TestRepStep(t *testing.T) {
+	var st repState
+	if got := repStep(&st, 0, 0); got != 0 {
+		t.Fatalf("idle = %d, want 0", got)
+	}
+	// New press fires at once.
+	if got := repStep(&st, 65, 1); got != 65 {
+		t.Fatalf("new press = %d, want 65", got)
+	}
+	// Holding below the delay stays quiet.
+	if got := repStep(&st, 65, 10); got != 0 {
+		t.Fatalf("hold = %d, want 0", got)
+	}
+	// At the delay it refires, then every interval.
+	if got := repStep(&st, 65, 1+repDelay); got != 65 {
+		t.Fatalf("delay fire = %d, want 65", got)
+	}
+	if got := repStep(&st, 65, 1+repDelay+repInterval); got != 65 {
+		t.Fatalf("interval fire = %d, want 65", got)
+	}
+	// Release resets; a re-press (duration backwards) fires at once
+	// even for the same code (cross-check staleness fix).
+	if got := repStep(&st, 0, 0); got != 0 {
+		t.Fatalf("release = %d, want 0", got)
+	}
+	if got := repStep(&st, 65, 300); got != 65 {
+		t.Fatalf("long hold = %d, want 65", got)
+	}
+	if got := repStep(&st, 65, 2); got != 65 {
+		t.Fatalf("re-press = %d, want 65", got)
+	}
+	// Switching keys fires at once.
+	if got := repStep(&st, 66, 1); got != 66 {
+		t.Fatalf("switch = %d, want 66", got)
+	}
+}
+
 func TestShiftCode(t *testing.T) {
 	if got := shiftCode(65, false); got != 97 {
 		t.Fatalf("A no-shift = %d, want 97", got)

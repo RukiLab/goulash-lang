@@ -38,6 +38,36 @@ func init() {
 	}
 }
 
+// repState tracks one repeat session.
+type repState struct {
+	code int
+	dur  int64
+	next int64
+}
+
+// repStep advances the repeat state machine over the observed
+// (code, duration) pair and returns the firing code, or 0.
+// A new key fires at once; a re-press after release (duration running
+// backwards) fires at once too; a held key refires after repDelay
+// ticks, then every repInterval ticks.
+func repStep(st *repState, code int, dur int64) int {
+	if code == 0 {
+		st.code, st.dur, st.next = 0, 0, 0
+		return 0
+	}
+	if code != st.code || dur < st.dur {
+		st.code, st.dur = code, dur
+		st.next = dur + repDelay
+		return code
+	}
+	st.dur = dur
+	if dur >= st.next {
+		st.next = dur + repInterval
+		return code
+	}
+	return 0
+}
+
 // KeyRepeat returns the firing key code with key-repeat semantics,
 // or 0 when nothing fires. A newly pressed (or switched) key fires at
 // once; a held key refires after repDelay ticks, then every
@@ -56,23 +86,15 @@ func (b *WindowBackend) KeyRepeat() int {
 			break
 		}
 	}
-	fire := shiftCode(code, shiftHeld())
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if code == 0 {
-		b.repCode = 0
+	st := &repState{code: b.repCode, dur: b.repDur, next: b.repNext}
+	fired := repStep(st, code, dur)
+	b.repCode, b.repDur, b.repNext = st.code, st.dur, st.next
+	if fired == 0 {
 		return 0
 	}
-	if code != b.repCode {
-		b.repCode = code
-		b.repNext = dur + repDelay
-		return fire
-	}
-	if dur >= b.repNext {
-		b.repNext = dur + repInterval
-		return fire
-	}
-	return 0
+	return shiftCode(fired, shiftHeld())
 }
 
 // Polling input (G2). Key/mouse queries hit ebiten directly (thread-safe);

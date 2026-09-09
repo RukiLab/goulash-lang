@@ -90,6 +90,7 @@ type WindowBackend struct {
 	dropFS    fs.FS // last snapshot (kept for dropload)
 	// Key-repeat state (keyrep(); guarded by mu).
 	repCode int   // firing code, 0 = none armed
+	repDur  int64 // last observed press duration (re-press detection)
 	repNext int64 // press-duration threshold for the next fire
 	// IME state (ime/imeget; Field is pumped on the game thread only,
 	// mirrors are guarded by mu for script-side reads).
