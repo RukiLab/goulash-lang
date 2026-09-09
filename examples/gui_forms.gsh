@@ -2,7 +2,7 @@ screen(640, 480)
 title("Goulash forms demo")
 
 button(1, "OK", 20, 400, 120, 40)
-button(2, "終亁E, 500, 400, 120, 40)
+button(2, "終了", 500, 400, 120, 40)
 chkbox(3, "同意する", 20, 350, 0)
 combox(4, 240, 350, 200, 36, ["red", "green", "blue"], 0)
 mesbox(5, 20, 60, 300, 200, "one\ntwo")
