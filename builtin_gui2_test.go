@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"gou/gui"
+	"gsh/gui"
 )
 
 // GUI builtin validation. A headless WindowBackend (no RunGame) serves

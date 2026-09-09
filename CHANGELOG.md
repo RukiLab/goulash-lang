@@ -1,0 +1,39 @@
+# CHANGELOG
+
+Goulash 処理系の変更履歴です。v0.1 は未リリースのため、すべて Unreleased 扱いです。
+
+## [Unreleased]
+
+### 追加
+- `keyrep()`（GUI）：キーリピート付きキー取得。英字は通常小文字、shift 押下中は大文字、数字 + shift は US 配列記号を返す
+- `ime()` / `imeget()`（GUI）：IME 変換入力と変換中文字列の取得
+- `dim(n1, n2, ...)`：多次元配列の確保（`null` 埋め）
+- map のドット記法（`m.name` ≡ `m["name"]`、読み書き・複合代入可）
+- デフォルト引数（`def f(a, b=10)`、呼出時評価）
+- 素の `enum` 文（連番整数定数、`Name_` 接頭辞、複数行・明示値・末尾カンマ可）
+- `lextokens(src)` / `strwidth(s)`（エディタ支援：字句列と表示幅）
+- `font(spec[, size])`（GUI）：フォントファイルパス・システムフォント名による書体指定（`GOULASH_FONT` 環境変数も対応）
+- `button` の画像指定を4状態に拡張（通常・ホバー・押下・無効）
+- `getkey` の検出キーを拡張（F1～F12・Shift/Ctrl/Alt・編集キー・記号キー、仮想キー番号準拠）
+- GUI 入力系の拡充：ゲームパッド、タッチ、マウスホイール・カーソル、全画面、ウィンドウ移動・終了検出、ドロップファイル
+- CUI/共通：`clipboard_get` / `clipboard_set`、`dlgopen` / `dlgsave`、`httpget`、`nanotime`、`getenv` / `setenv`、`open`、メモ帳・バイト列・配列操作群
+- VS Code 拡張の雛形（`editors/vscode/`：`.gsh` の強調表示・編集支援）
+
+### 変更（破壊的）
+- コマンド名：`hsp-next` → `gou` → `gsh`。モジュールも `gsh`（`gsh/gui`）に統一。言語名 `Goulash` は維持
+- スクリプト拡張子：`.hspn` → `.gou` → `.gsh` に統一
+- `struct` を廃止し `map` に統一（宣言・リテラル・型・専用エラーごと削除）
+- 配列の自動拡張を廃止。未確保・範囲外への代入はエラー。拡張は `push()` のみ
+- map・配列の欠番キー読取をエラー化（`has()` で事前確認）
+- `pos`：GUI ではピクセル基準に変更。CUI/GUI とも負値を許可
+- `boxf()`：引数なしで全画面塗りつぶし
+- `font`：同梱フォント（M+）を廃止し OS システムフォントを使用
+- `goto` / `gosub` / `elif` の専用エラーを廃止。通常の識別子として使用可能
+- `#enum` ディレクティブを廃止（不明なディレクティブ扱い）。連番定数は素の `enum` 文に一本化
+- MANUAL から HSP 互換記述を削除
+
+### 削除
+- `redraw`（完全削除。使用時は未定義エラー）
+- `struct` 関連の構文・値・組み込み・テスト・文書
+- 同梱フォント `gui/mplus-1p-regular.ttf` と `gui/font-license.md`
+- `palette` はトゥルーカラーのため非対応を明記

@@ -210,7 +210,7 @@ func TestEnv(t *testing.T) {
 	mustErrIO(t, "open(\"\")\n", "空にすることはできません")
 	mustErrIO(t, "dlgopen(1)\n", "文字列である必要があります")
 	mustErrIO(t, "httpget(1)\n", "文字列である必要があります")
-	mustOutIO(t, "clipboard_set(\"gou\")\nmes(clipboard_get())\n", "", "gou\n")
+	mustOutIO(t, "clipboard_set(\"gsh\")\nmes(clipboard_get())\n", "", "gsh\n")
 	mustErrIO(t, "clipboard_set(1)\n", "文字列である必要があります")
 }
 

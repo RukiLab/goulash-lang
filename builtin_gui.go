@@ -5,7 +5,7 @@
 package main
 
 import (
-	"gou/gui"
+	"gsh/gui"
 )
 
 // guiBE fetches the window backend or reports a clean error.

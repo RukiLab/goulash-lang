@@ -1,4 +1,4 @@
-module gou
+module gsh
 
 go 1.25.0
 

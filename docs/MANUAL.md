@@ -1874,7 +1874,7 @@ Goulash は `ime(1)` 中の入力行カーソル位置を毎 tick 通知して�
 候補ウィンドウは常に入力行の近くに表示されます。
 
 直接制御が必要になった場合は、Ebiten 側に API が追加されるのを待つか、
-`gou/gui` パッケージで `textinput.Field.HandleInputWithBounds` に渡す矩形を
+`gsh/gui` パッケージで `textinput.Field.HandleInputWithBounds` に渡す矩形を
 変える実装検討が必要です（現状は入力行カーソル位置に固定しています）。
 
 ---

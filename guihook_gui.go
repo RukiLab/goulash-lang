@@ -3,7 +3,7 @@
 package main
 
 import (
-	"gou/gui"
+	"gsh/gui"
 )
 
 // GUI hooks: only compiled with -tags gui, so the default console build

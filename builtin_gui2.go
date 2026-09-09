@@ -4,7 +4,7 @@
 package main
 
 import (
-	"gou/gui"
+	"gsh/gui"
 )
 
 func init() {
