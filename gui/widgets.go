@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"strings"
 	"sync"
 
 	"github.com/ebitenui/ebitenui"
@@ -295,12 +296,23 @@ func (b *WindowBackend) AddButton(id int, label string, x, y, w, h int, imgs ...
 				b.mu.Unlock()
 			}),
 		}
-		if label != "" {
-			opts = append(opts, widget.ButtonOpts.Text(label, face, &widget.ButtonTextColor{
-				Idle: color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF},
-			}))
-		}
+		white := color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}
 		if len(imgs) > 0 && imgs[0] != 0 {
+			// Snapshot each state into button-sized images: Graphic
+			// centers its image, so a raw window-sized buffer would
+			// show the wrong (usually transparent) region. Exact-fit
+			// buffers keep the live reference.
+			snap := func(src *ebiten.Image) *ebiten.Image {
+				sw, sh := src.Bounds().Dx(), src.Bounds().Dy()
+				if sw == w && sh == h {
+					return src
+				}
+				out := ebiten.NewImage(w, h)
+				op := &ebiten.DrawImageOptions{}
+				op.GeoM.Scale(float64(w)/float64(sw), float64(h)/float64(sh))
+				out.DrawImage(src, op)
+				return out
+			}
 			srcs := make([]*ebiten.Image, 4)
 			for i, imgID := range imgs {
 				if imgID == 0 {
@@ -311,7 +323,7 @@ func (b *WindowBackend) AddButton(id int, label string, x, y, w, h int, imgs ...
 					opErr = fmt.Errorf("button：画像バッファ %d はまだ準備できていません", imgID)
 					return
 				}
-				srcs[i] = src
+				srcs[i] = snap(src)
 			}
 			idle := srcs[0]
 			hover := srcs[1]
@@ -326,8 +338,15 @@ func (b *WindowBackend) AddButton(id int, label string, x, y, w, h int, imgs ...
 			if disabled == nil {
 				disabled = dimImage(idle)
 			}
-			opts = append(opts, widget.ButtonOpts.Graphic(&widget.GraphicImage{
+			// NOTE: ebitenui swaps graphic images by state only for
+			// buttons built with TextAndImage (separate Text+Graphic
+			// opts leave the icon frozen on Idle).
+			opts = append(opts, widget.ButtonOpts.TextAndImage(label, face, &widget.GraphicImage{
 				Idle: idle, Hover: hover, Pressed: pressed, Disabled: disabled,
+			}, &widget.ButtonTextColor{Idle: white}))
+		} else if label != "" {
+			opts = append(opts, widget.ButtonOpts.Text(label, face, &widget.ButtonTextColor{
+				Idle: white,
 			}))
 		}
 		b.placeChild(id, e, widget.NewButton(opts...), x, y, w, h)
@@ -659,6 +678,29 @@ func (b *WindowBackend) AreaText(id int) (string, error) {
 	return e.cached, nil
 }
 
+// SetAreaText replaces the multiline box content (game thread).
+// ebitenui TextArea is display-only (no keyboard editing), so mesbox
+// works as a program-driven log viewer: setstr() writes, getstr()
+// reads. The mirror updates inline so a following getstr() is exact.
+func (b *WindowBackend) SetAreaText(id int, text string) error {
+	// Existence is checked up front (like AddButton/AddArea) so unknown
+	// ids fail without blocking on the game thread.
+	b.mu.Lock()
+	e, ok := b.widgets[id]
+	if !ok || e.kind != wArea || e.area == nil {
+		b.mu.Unlock()
+		return fmt.Errorf("setstr：不明な mesbox %d です", id)
+	}
+	b.mu.Unlock()
+	b.runOnLoop(func() {
+		e.area.SetText(text)
+		b.mu.Lock()
+		e.cached = text
+		b.mu.Unlock()
+	})
+	return nil
+}
+
 // SetEnabled toggles widget interactivity; applied on the game thread.
 func (b *WindowBackend) SetEnabled(id int, on bool) error {
 	b.mu.Lock()
@@ -738,9 +780,23 @@ func (b *WindowBackend) Dialog(msg, mode string) (int, error) {
 				widget.RowLayoutOpts.Spacing(12),
 				widget.RowLayoutOpts.Padding(widget.NewInsetsSimple(16)))),
 		)
-		inner.AddChild(widget.NewLabel(
-			widget.LabelOpts.Text(msg, face, &widget.LabelColor{Idle: white}),
-		))
+		b.mu.Lock()
+		ww, wh := b.w, b.h
+		vface, lineH := b.face, b.lineH
+		b.mu.Unlock()
+		if lineH <= 0 {
+			lineH = 20
+		}
+		maxW := float64(ww) - 128
+		if maxW < 200 {
+			maxW = 200
+		}
+		lines := wrapDialogText(msg, vface, maxW)
+		for _, ln := range lines {
+			inner.AddChild(widget.NewLabel(
+				widget.LabelOpts.Text(ln, face, &widget.LabelColor{Idle: white}),
+			))
+		}
 		btnRow := widget.NewContainer(
 			widget.ContainerOpts.Layout(widget.NewRowLayout(
 				widget.RowLayoutOpts.Direction(widget.DirectionHorizontal),
@@ -767,13 +823,96 @@ func (b *WindowBackend) Dialog(msg, mode string) (int, error) {
 			))
 		}
 		inner.AddChild(btnRow)
-		bw, bh := 380, 170
-		b.mu.Lock()
-		ww, wh := b.w, b.h
-		b.mu.Unlock()
+		needW := 0.0
+		for _, ln := range lines {
+			if w, _ := text.Measure(ln, vface, 0); w > needW {
+				needW = w
+			}
+		}
+		bw := int(needW) + 96
+		if bw < 240 {
+			bw = 240
+		}
+		if bw > ww-32 {
+			bw = ww - 32
+		}
+		bh := int(float64(len(lines))*lineH) + 140
+		if bh > wh-32 {
+			bh = wh - 32
+		}
 		win.SetLocation(rectCentered(ww, wh, bw, bh))
 	})
 	return <-result, nil
+}
+
+// isCJKBreakable reports runes that may start a wrapped line anywhere
+// (Japanese kana/kanji, Hangul, CJK symbols, fullwidth forms).
+func isCJKBreakable(r rune) bool {
+	switch {
+	case r >= 0x3040 && r <= 0x30FF: // hiragana + katakana
+		return true
+	case r >= 0x3400 && r <= 0x9FFF: // CJK ext-A .. ideographs
+		return true
+	case r >= 0xAC00 && r <= 0xD7AF: // hangul syllables
+		return true
+	case r >= 0xFF00 && r <= 0xFFEF: // fullwidth forms
+		return true
+	}
+	return false
+}
+
+// wrapDialogText breaks s into lines fitting maxW pixels (measured
+// with face). Explicit newlines are honored; Latin prefers word
+// boundaries while CJK breaks anywhere.
+func wrapDialogText(s string, face *text.GoTextFace, maxW float64) []string {
+	if face == nil {
+		return strings.Split(s, "\n")
+	}
+	var lines []string
+	for _, para := range strings.Split(s, "\n") {
+		if para == "" {
+			lines = append(lines, "")
+			continue
+		}
+		rs := []rune(para)
+		for len(rs) > 0 {
+			n := len(rs)
+			for n > 0 {
+				w, _ := text.Measure(string(rs[:n]), face, 0)
+				if w <= maxW {
+					break
+				}
+				n--
+			}
+			if n == 0 {
+				n = 1 // single rune wider than the window
+			}
+			if n < len(rs) {
+				// Back to the last space when cutting inside a
+				// Latin word (both sides non-space, non-CJK).
+				tail := rs[:n]
+				sp := -1
+				for i := len(tail) - 1; i >= 0; i-- {
+					if tail[i] == ' ' {
+						sp = i
+						break
+					}
+				}
+				if sp > 0 && !isCJKBreakable(rs[sp-1]) && !isCJKBreakable(rs[n]) {
+					n = sp
+				}
+			}
+			lines = append(lines, strings.TrimRight(string(rs[:n]), " "))
+			rs = rs[n:]
+			for len(rs) > 0 && rs[0] == ' ' {
+				rs = rs[1:]
+			}
+		}
+	}
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	return lines
 }
 
 func rectCentered(ww, wh, bw, bh int) image.Rectangle {

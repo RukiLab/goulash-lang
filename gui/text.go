@@ -225,6 +225,20 @@ func (b *WindowBackend) SetFontFile(spec string, size int) error {
 	return nil
 }
 
+// caretPixels returns the line-editor caret x in device pixels,
+// measured with the current face (proportional fonts drift from the
+// cell grid, so cell math misplaces the IME composition). ok is false
+// with no active editor.
+func (b *WindowBackend) caretPixels() (x float64, row int, ok bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.line == nil || b.face == nil {
+		return 0, 0, false
+	}
+	w, _ := text.Measure(b.line.prompt+string(b.line.buf), b.face, 0)
+	return w, b.curY, true
+}
+
 // MoveTo sets the cursor. In GUI it is pixel-based for the graphics
 // cursor (gcopy etc); the text cursor (mes) is derived as the nearest
 // character cell so existing line-based text still works. In CUI the

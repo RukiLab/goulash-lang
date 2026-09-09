@@ -147,6 +147,28 @@ func init() {
 		return Str(s), nil
 	})
 
+	// setstr(id, s): replace multiline box content. mesbox is
+	// display-only (ebitenui TextArea has no editing), so it serves
+	// as a program-driven log viewer with getstr().
+	register("setstr", 2, 2, func(in *Interp, args []Value, at Pos) (Value, error) {
+		wb, err := guiBE(in, at, "setstr")
+		if err != nil {
+			return Null(), err
+		}
+		id, err := needInt("setstr", args, 0, at)
+		if err != nil {
+			return Null(), err
+		}
+		s, err := needString("setstr", args, 1, at)
+		if err != nil {
+			return Null(), err
+		}
+		if err := wb.SetAreaText(int(id), s); err != nil {
+			return Null(), rtErrf(at, "%s", err.Error())
+		}
+		return Null(), nil
+	})
+
 	// objprm(id, key, value): widget parameter. key "enable" toggles
 	// interactivity (value 0/1).
 	register("objprm", 3, 3, func(in *Interp, args []Value, at Pos) (Value, error) {

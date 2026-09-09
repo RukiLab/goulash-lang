@@ -46,16 +46,18 @@ func (b *WindowBackend) pumpIME() {
 	if !b.imeField.IsFocused() {
 		return
 	}
+	// Anchor the composition/candidate window at the measured caret
+	// (cell math drifts on proportional fonts).
+	cx, cy, ok := b.caretPixels()
 	b.mu.Lock()
-	cw, lh := b.charW, b.lineH
+	lh := b.lineH
+	b.mu.Unlock()
 	bounds := image.Rect(0, 0, 1, int(lh+0.5))
-	if b.line != nil {
-		cells := len([]rune(b.line.prompt)) + len(b.line.buf)
-		x := int(float64(cells)*cw + 0.5)
-		y := int(float64(b.curY)*lh + 0.5)
+	if ok {
+		x := int(cx + 0.5)
+		y := int(float64(cy)*lh + 0.5)
 		bounds = image.Rect(x, y, x+1, y+int(lh+0.5))
 	}
-	b.mu.Unlock()
 	if _, err := b.imeField.HandleInputWithBounds(bounds); err != nil {
 		return
 	}

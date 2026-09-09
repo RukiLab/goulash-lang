@@ -47,6 +47,81 @@ func TestSystemFontLoads(t *testing.T) {
 	}
 }
 
+func TestSetAreaTextHeadless(t *testing.T) {
+	b := mustNew(t)
+	done := make(chan struct{})
+	var addErr error
+	go func() {
+		defer close(done)
+		addErr = b.AddArea(30, 0, 0, 200, 100, "one\ntwo")
+	}()
+	if !pumpUntil(b, done, 10*time.Second) {
+		t.Fatal("AddArea never completed")
+	}
+	if addErr != nil {
+		t.Fatalf("AddArea: %v", addErr)
+	}
+	set := make(chan struct{})
+	var setErr error
+	go func() {
+		defer close(set)
+		setErr = b.SetAreaText(30, "three\nfour")
+	}()
+	if !pumpUntil(b, set, 10*time.Second) {
+		t.Fatal("SetAreaText never completed")
+	}
+	if setErr != nil {
+		t.Fatalf("SetAreaText: %v", setErr)
+	}
+	if s, _ := b.AreaText(30); s != "three\nfour" {
+		t.Fatalf("AreaText(30) = %q, want three\\nfour", s)
+	}
+	if err := b.SetAreaText(99, "x"); err == nil {
+		t.Fatal("SetAreaText unknown should error")
+	}
+}
+
+func TestWrapDialogText(t *testing.T) {
+	face, err := loadFace(16)
+	if err != nil {
+		t.Skipf("no system font: %v", err)
+	}
+	if got := wrapDialogText("short", face, 500); len(got) != 1 || got[0] != "short" {
+		t.Fatalf("short = %q", got)
+	}
+	long := "あいうえおかきくけこさしすせそたちつてとなにぬねの"
+	lines := wrapDialogText(long, face, 200)
+	if len(lines) < 2 {
+		t.Fatalf("long should wrap, got %q", lines)
+	}
+	for _, ln := range lines {
+		if w, _ := text.Measure(ln, face, 0); w > 201 {
+			t.Fatalf("line %q too wide: %v", ln, w)
+		}
+	}
+	if strings.Join(lines, "") != long {
+		t.Fatalf("wrap lost text: %q", lines)
+	}
+	multi := wrapDialogText("a b c\nd e", face, 500)
+	if len(multi) != 2 || multi[0] != "a b c" || multi[1] != "d e" {
+		t.Fatalf("explicit breaks = %q", multi)
+	}
+}
+
+func TestCaretPixelsHeadless(t *testing.T) {
+	b := mustNew(t)
+	if _, _, ok := b.caretPixels(); ok {
+		t.Fatal("no editor should report !ok")
+	}
+	b.mu.Lock()
+	b.line = &lineReq{prompt: "あ>", buf: []rune("xy"), done: make(chan string, 1)}
+	b.mu.Unlock()
+	x, row, ok := b.caretPixels()
+	if !ok || x <= 0 {
+		t.Fatalf("caretPixels = %v,%v,%v", x, row, ok)
+	}
+}
+
 func TestShiftCode(t *testing.T) {
 	if got := shiftCode(65, false); got != 97 {
 		t.Fatalf("A no-shift = %d, want 97", got)

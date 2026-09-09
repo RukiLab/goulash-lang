@@ -278,6 +278,13 @@ func (b *WindowBackend) Draw(screen *ebiten.Image) {
 	face := b.face
 	charW, lineH := b.charW, b.lineH
 	ascent := face.Metrics().HAscent
+	// Caret x in pixels (measured: proportional fonts drift from cells).
+	caretX := 0.0
+	if editor != nil {
+		if w, _ := text.Measure(editor.prompt+edBuf, face, 0); w > 0 {
+			caretX = w
+		}
+	}
 	b.mu.Unlock()
 
 	rows := int(float64(b.h) / lineH)
@@ -310,10 +317,14 @@ func (b *WindowBackend) Draw(screen *ebiten.Image) {
 	}
 	if editor != nil {
 		drawText(0, curY, editor.prompt+edBuf, color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF})
-		// In-conversion IME text follows the caret in gray.
-		if comp != "" {
-			cells := len([]rune(editor.prompt)) + len([]rune(edBuf))
-			drawText(cells, curY, comp, color.NRGBA{0x99, 0x99, 0x99, 0xFF})
+		// In-conversion IME text follows the caret in gray, measured
+		// in pixels (cell math drifts on proportional fonts).
+		if comp != "" && curY >= minY {
+			op := &text.DrawOptions{}
+			op.GeoM.Translate(caretX, float64(curY-minY)*lineH+ascent)
+			op.ColorScale.Reset()
+			op.ColorScale.ScaleWithColor(color.NRGBA{0x99, 0x99, 0x99, 0xFF})
+			text.Draw(screen, comp, face, op)
 		}
 	}
 	if b.ui != nil {

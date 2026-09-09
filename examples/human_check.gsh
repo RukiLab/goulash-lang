@@ -28,6 +28,19 @@ def ask(name, msg) {
     }
 }
 
+// 次へボタンで待機する（時間経過ではなく操作で進む）。
+// 指示 mes は呼び出し側で表示しておくこと。
+def wait_next() {
+    button(90, "次へ", 500, 420, 120, 40)
+    while true {
+        if pressed(90) {
+            break
+        }
+        await()
+    }
+    clrobj(90)
+}
+
 // ---- T1: 描画・文字 ----
 cls()
 color(32, 32, 48)
@@ -42,36 +55,41 @@ pset(320, 240)
 color(255, 255, 255)
 pos(16, 40)
 mes("draw あいう 012")
-ask("T1 draw+text", "図形（四角・対角線・円・点）と文字が正しく見えるか")
+mes("確認したら次へ")
+wait_next()
+ask("T1 draw+text", "図形（四角・対角線・円・点）と文字が正しく見えたか")
 
 // ---- T2: フォント切替 ----
 font("meiryo.ttc", 24)
 cls()
 pos(16, 40)
 mes("フォント切替 あいう ABC")
-ask("T2 font switch", "書体が游ゴシックから変わって見えるか")
+mes("確認したら次へ")
+wait_next()
+ask("T2 font switch", "書体が游ゴシックから変わって見えたか")
 font("YuGothR.ttc", 16)
 cls()
 pos(16, 40)
 mes("16px に戻った")
-sleep(800)
+wait_next()
 
 // ---- T3: ボタン画像4状態 ----
 gsel(1)
 color(200, 60, 60)
-boxf(0, 0, 120, 40)
+boxf()
 gsel(2)
 color(60, 200, 60)
-boxf(0, 0, 120, 40)
+boxf()
 gsel(3)
 color(60, 60, 200)
-boxf(0, 0, 120, 40)
+boxf()
 gsel(0)
+color(255, 255, 255)
 cls()
 button(10, "", 260, 200, 120, 40, 1, 2, 3)
 pos(16, 40)
-mes("10秒: 赤=通常、ホバー=緑、押下=青を確認")
-sleep(10000)
+mes("赤=通常。ホバー=緑、押下=青を確認して次へ")
+wait_next()
 ask("T3 button states", "通常赤・ホバー緑・押下青に変わったか")
 objprm(10, "enable", 0)
 sleep(500)
@@ -105,13 +123,20 @@ if getstr(14) == "one\ntwo" {
 } else {
     ng("T4 mesbox prefill")
 }
+// mesbox は表示専用。setstr で書き換えて getstr で読む。
+setstr(14, "three\nfour")
+if getstr(14) == "three\nfour" {
+    ok("T4 mesbox setstr")
+} else {
+    ng("T4 mesbox setstr")
+}
 pos(16, 420)
-mes("10秒: 入力・チェック外し・選択変更を操作")
-sleep(10000)
+mes("入力・チェック外し・選択変更を操作して次へ")
+wait_next()
 cls()
-mes("memo=" + getstr(14))
 mes("agree=" + str(checked(12)))
 mes("color=" + str(selected(13)))
+mes("text=" + gettext(11))
 ask("T4 widget interactive", "操作が読取に反映されたか")
 clrobj()
 
