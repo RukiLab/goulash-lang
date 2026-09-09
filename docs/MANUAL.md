@@ -1893,6 +1893,12 @@ GUIテスト：
 go test -tags gui ./...
 ```
 
+人手検証テスト（実ウィンドウでの目視・操作確認）：
+
+```sh
+go run -tags gui . run examples/human_check.gsh --gui
+```
+
 主要なテスト：
 
 ```text

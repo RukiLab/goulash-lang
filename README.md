@@ -56,6 +56,7 @@ go run -tags gui . run examples/gui_hello.gsh --gui
 | `gui_input.gsh` | キー・マウス入力 |
 | `gui_widgets.gsh` | ウィジェット集（ダイアログ含む） |
 | `gui_audio.gsh` | 音声再生 |
+| `human_check.gsh` | 人手検証テスト（GUI専用。描画・入力・IME・音声の確認） |
 
 ## テスト
 
