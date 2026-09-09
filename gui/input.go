@@ -17,8 +17,15 @@ const (
 )
 
 // repCodes is the keyrep scan set (same numbering as getkey),
-// ascending: the first pressed code wins.
+// ascending: the first pressed code wins. Modifier codes (16/17/18)
+// are deferred: they fire only when no other key is pressed, so
+// Shift+A reports the letter (shifted), not the modifier.
 var repCodes []int
+
+// isModCode reports modifier codes deferred by the keyrep scan.
+func isModCode(code int) bool {
+	return code == 16 || code == 17 || code == 18
+}
 
 func init() {
 	for _, c := range []int{8, 9, 13, 16, 17, 18, 27, 32, 33, 34, 35, 36, 37, 38, 39, 40, 45, 46} {
@@ -68,23 +75,63 @@ func repStep(st *repState, code int, dur int64) int {
 	return 0
 }
 
+// modPressDur returns the press duration of a modifier code,
+// either side (left or right); 0 when neither is held.
+func modPressDur(code int) int64 {
+	var l, r ebiten.Key
+	switch code {
+	case 16:
+		l, r = ebiten.KeyShiftLeft, ebiten.KeyShiftRight
+	case 17:
+		l, r = ebiten.KeyControlLeft, ebiten.KeyControlRight
+	case 18:
+		l, r = ebiten.KeyAltLeft, ebiten.KeyAltRight
+	default:
+		return 0
+	}
+	dl := int64(inpututil.KeyPressDuration(l))
+	dr := int64(inpututil.KeyPressDuration(r))
+	if dl > dr {
+		return dl
+	}
+	return dr
+}
+
+// scanRepKeys returns the first pressed code (and its duration),
+// skipping modifier codes unless mods is true.
+func scanRepKeys(mods bool) (int, int64) {
+	for _, c := range repCodes {
+		if isModCode(c) != mods {
+			continue
+		}
+		var d int64
+		if mods {
+			d = modPressDur(c)
+		} else {
+			k, ok := keyFor(c)
+			if !ok {
+				continue
+			}
+			d = int64(inpututil.KeyPressDuration(k))
+		}
+		if d > 0 {
+			return c, d
+		}
+	}
+	return 0, 0
+}
+
 // KeyRepeat returns the firing key code with key-repeat semantics,
 // or 0 when nothing fires. A newly pressed (or switched) key fires at
 // once; a held key refires after repDelay ticks, then every
 // repInterval ticks. Letters fire lowercase (97-122) unless shift is
 // held (65-90); shifted digits fire their US-layout symbols.
+// Modifiers fire only when pressed alone, so Shift+A reports 65.
 // Script-thread safe.
 func (b *WindowBackend) KeyRepeat() int {
-	code, dur := 0, int64(0)
-	for _, c := range repCodes {
-		k, ok := keyFor(c)
-		if !ok {
-			continue
-		}
-		if d := int64(inpututil.KeyPressDuration(k)); d > 0 {
-			code, dur = c, d
-			break
-		}
+	code, dur := scanRepKeys(false)
+	if code == 0 {
+		code, dur = scanRepKeys(true)
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
