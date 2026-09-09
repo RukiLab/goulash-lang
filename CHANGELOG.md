@@ -20,6 +20,7 @@ Goulash 処理系の変更履歴です。v0.1 は未リリースのため、す�
 - VS Code 拡張の雛形（`editors/vscode/`：`.gsh` の強調表示・編集支援）
 - `setstr(id, s)`（GUI）：`mesbox` 内容の置換（`mesbox` は表示専用のため）
 - `examples/human_check.gsh`：人手検証テスト（描画・入力・IME・音声・キーの確認手順）
+- `keychar()`（GUI）：OS の確定文字入力（配列・shift・caps 対応）。物理キーの `keyrep()` に対する文字入力用 API
 
 ### 変更（破壊的）
 - コマンド名：`hsp-next` → `gou` → `gsh`。モジュールも `gsh`（`gsh/gui`）に統一。言語名 `Goulash` は維持

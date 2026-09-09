@@ -59,6 +59,10 @@ func TestGuiBuiltinValidation(t *testing.T) {
 	if err != nil || v.K != KInt || v.I != 0 {
 		t.Fatalf("keyrep(): got %v, %v", v, err)
 	}
+	v, err = guiEval(t, "keychar()")
+	if err != nil || v.K != KString || v.S != "" {
+		t.Fatalf("keychar(): got %v, %v", v, err)
+	}
 	v, err = guiEval(t, "clicked()")
 	if err != nil || v.K != KBool || v.B {
 		t.Fatalf("clicked(): got %v, %v", v, err)

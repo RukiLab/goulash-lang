@@ -424,6 +424,23 @@ func (b *WindowBackend) SetCursorVisible(on bool) {
 	}
 }
 
+// KeyChars returns characters typed since the previous frame, as the
+// OS reports them (locale-dependent Unicode translation: layout,
+// shift, and caps-correct, e.g. Shift+A is "A"). Every-frame polling
+// is expected; "" when nothing was typed. While the input() line
+// editor owns the key stream it reports "" so keystrokes are not
+// processed twice. Non-character keys (arrows, F-keys) never appear
+// here; use keyrep()/getkey() for those.
+func (b *WindowBackend) KeyChars() string {
+	b.mu.Lock()
+	active := b.line != nil
+	b.mu.Unlock()
+	if active {
+		return ""
+	}
+	return string(ebiten.AppendInputChars(nil))
+}
+
 // KeyDown reports whether a script key code is held. Modifier codes
 // 16/17/18 match either side (left or right).
 func (b *WindowBackend) KeyDown(code int) (bool, bool) {

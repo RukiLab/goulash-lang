@@ -159,6 +159,24 @@ func TestRepStep(t *testing.T) {
 	}
 }
 
+func TestKeyCharsHeadless(t *testing.T) {
+	b := mustNew(t)
+	// Headless: no loop, nothing typed.
+	if got := b.KeyChars(); got != "" {
+		t.Fatalf("KeyChars = %q, want empty", got)
+	}
+	// While the line editor owns the stream, keychar stays silent.
+	b.mu.Lock()
+	b.line = &lineReq{prompt: "> ", buf: nil, done: make(chan string, 1)}
+	b.mu.Unlock()
+	if got := b.KeyChars(); got != "" {
+		t.Fatalf("KeyChars during input = %q, want empty", got)
+	}
+	b.mu.Lock()
+	b.line = nil
+	b.mu.Unlock()
+}
+
 func TestShiftCode(t *testing.T) {
 	if got := shiftCode(65, false); got != 97 {
 		t.Fatalf("A no-shift = %d, want 97", got)

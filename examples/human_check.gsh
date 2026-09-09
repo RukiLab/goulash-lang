@@ -244,6 +244,42 @@ if code == 65 {
     ng("T8 keyrep upper")
 }
 
+cls()
+pos(16, 40)
+mes("離して→5秒: A を押す（keychar で a が出る）")
+sleep(1000)
+t0 = tick()
+hit = false
+while tick() - t0 < 300 {
+    if keychar() == "a" {
+        hit = true
+    }
+    await()
+}
+if hit {
+    ok("T8 keychar lower")
+} else {
+    ng("T8 keychar lower")
+}
+
+cls()
+pos(16, 40)
+mes("離して→5秒: Shift+A を押す（keychar で A が出る）")
+sleep(1000)
+t0 = tick()
+hit = false
+while tick() - t0 < 300 {
+    if keychar() == "A" {
+        hit = true
+    }
+    await()
+}
+if hit {
+    ok("T8 keychar upper")
+} else {
+    ng("T8 keychar upper")
+}
+
 // ---- T9: マウス ----
 cls()
 pos(16, 40)

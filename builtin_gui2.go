@@ -42,6 +42,18 @@ func init() {
 		return Int(int64(wb.KeyRepeat())), nil
 	})
 
+	// keychar(): typed characters since the previous frame, as the OS
+	// reports them (layout/shift/caps-correct). "" when none.
+	// Physical keys are keyrep()/getkey() territory; text entry is
+	// keychar() territory.
+	register("keychar", 0, 0, func(in *Interp, args []Value, at Pos) (Value, error) {
+		wb, err := guiBE(in, at, "keychar")
+		if err != nil {
+			return Null(), err
+		}
+		return Str(wb.KeyChars()), nil
+	})
+
 	// stick(): direction/action bitmask. 1 left, 2 up, 4 right, 8 down,
 	// 16 ok (space/Z/enter), 32 cancel (esc/X), 64 left click, 128 right.
 	register("stick", 0, 0, func(in *Interp, args []Value, at Pos) (Value, error) {
