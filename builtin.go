@@ -47,6 +47,14 @@ type Backend interface {
 	TextWidth(s string) int
 }
 
+// immediateReader is implemented by backends with immediate-mode
+// input (GUI): ReadImmediate returns typed characters since the
+// previous call (IME-committed text included) without blocking.
+// The input() builtin prefers it over the blocking ReadLine.
+type immediateReader interface {
+	ReadImmediate() string
+}
+
 // ConsoleBackend is the CUI implementation of Backend.
 type ConsoleBackend struct {
 	out io.Writer

@@ -78,7 +78,21 @@ func init() {
 
 	// input([prompt]): read one line, returned as a string.
 	// EOF yields null.
+	//
+	// GUI is immediate mode instead of line mode: input() returns
+	// characters typed since the previous call (IME-committed text
+	// included, key-repeat applied, "" when none) and never blocks,
+	// so a polling loop builds its own line editor (break on "\r",
+	// asc() for codes). A focused inputbox owns the stream (input()
+	// reports "" then). GUI takes no arguments: a prompt would spam
+	// every poll, so print it with mes() instead.
 	register("input", 0, 1, func(in *Interp, args []Value, at Pos) (Value, error) {
+		if ir, ok := in.be.(immediateReader); ok {
+			if len(args) != 0 {
+				return Null(), rtErrf(at, "input は GUI では引数を取りません（プロンプトは mes() で表示してください）。%d 個が渡されました", len(args))
+			}
+			return Str(ir.ReadImmediate()), nil
+		}
 		prompt := ""
 		if len(args) == 1 {
 			var err error

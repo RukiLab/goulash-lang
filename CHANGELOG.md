@@ -5,7 +5,6 @@ Goulash 処理系の変更履歴です。v0.1 は未リリースのため、す�
 ## [Unreleased]
 
 ### 追加
-- `keychar()`（GUI）：OS の確定文字入力（配列・shift・caps 対応）にキーリピート付き。新規は即時、保持は 24 tick 後・以降 4 tick ごと
 - `ime()` / `imeget()`（GUI）：IME 変換入力と変換中文字列の取得
 - `dim(n1, n2, ...)`：多次元配列の確保（`0` 埋め）
 - map のドット記法（`m.name` ≡ `m["name"]`、読み書き・複合代入可）
@@ -21,11 +20,11 @@ Goulash 処理系の変更履歴です。v0.1 は未リリースのため、す�
 - `setstr(id, s)`（GUI）：`mesbox` 内容の置換（`mesbox` は表示専用のため）
 - `examples/human_check.gsh`：人手検証テスト（描画・入力・IME・音声・キーの確認手順）
 - `pipeexec(name, args...)`：外部コマンドを実行し標準出力を文字列で返す（`exec` の取込版。起動失敗・非0終了はエラー）
-- `asc(s)` / `chr(code)`：先頭文字のコードポイント取得とコードポイントの文字化（`keychar()` の制御文字判定用）
-- `inputbox` 変換中の caret 追従（GUI）：変換中文字列の分だけ caret・候補窓基準が進む（`input()` 行・`inputbox` とも）
+- `asc(s)` / `chr(code)`：先頭文字のコードポイント取得とコードポイントの文字化（GUI `input()` の制御文字判定用）
+- `inputbox` 変換中の caret 追従（GUI）：変換中文字列の分だけ caret・候補窓基準が進む（`inputbox` 前面時）
 - `resizable([v])`（GUI）：ウィンドウのドラッグによるリサイズ許可・状態取得（描画解像度は `screen()` のまま）
 - `inputbox` の自前実装（GUI）：カスタム描画の1行エディタ。Backspace・Delete・矢印・Home・End（長押しリピート付き）、IME変換対応（フォーカスで自動有効化、候補窓は caret 位置）
-- `keychar()` の制御文字対応（GUI）：Backspace・Tab・Enter・Esc・Delete を ASCII 文字（`\x08`・`\t`・`\r`・`\x1b`・`\x7f`）で返却（同じリピート付き）
+- GUI `input()` の即時モード：前回呼出以降の確定文字列を返却（IME確定分を含む。Backspace・Tab・Enter・Esc・Delete はコード `8`・`9`・`13`・`27`・`127` の制御文字として同じリピート付き）。行編集は `"\r"` での区切り・`asc()` との組合せで組む。`inputbox` フォーカス中は `""`
 - `color(r, g, b [, a])`：α値（`0` 透明～`255` 不透明）に対応。GUI の文字・図形描画に適用（`galpha` とは乗算）。CUI の端末文字αは無視
 - VS Code 拡張に F5 実行を追加（`F5` = `gsh run`、`Ctrl+F5` = `--gui` 付き。`gsh` の PATH 登録が前提）
 - `#mode cli` / `#mode gui` 指示子：`gsh run` の実行モードをコード内で指定（`#include` 先も含めた有効行の最後が勝つ。REPL は常に CUI）
@@ -49,7 +48,7 @@ Goulash 処理系の変更履歴です。v0.1 は未リリースのため、す�
 - `color()` の引数を 0/3 個から 0/3/4 個に拡張（`SetColor` 内部 I/F も RGBA 化）
 - `Foreground()` / 図形描画系を `[3]int` から `[4]int`（RGBA）に変更
 - `exec()` を非同期起動に変更（起動成功で `0` を返してすぐ戻る。終了コードは返さない。`pipeexec()` は終了待ち＋取込のまま）
-- CUI の即時キー入力は見送り（`keychar()` は GUI 専用、`input()` は行単位のまま。新規依存を避けるため）
+- GUI のブロッキング行入力を廃止（`input()` は即時モードに一本化。CUI の `input([prompt])` は行単位のまま）
 - `gsh run` の既定を GUI モードに変更（`#mode` 省略時はウィンドウを開く。`--gui` は強制指定として残し、`--cui` を追加。フラグは `#mode` より優先）
 
 ### 修正
@@ -63,11 +62,12 @@ Goulash 処理系の変更履歴です。v0.1 は未リリースのため、す�
 - ラベルなし画像ボタンの表示ずれを修正（空テキスト行による数ピクセルのオフセットを解消。画像単独時は状態フェイスで全面表示）
 
 ### 削除
+- `keychar()`（導入直後に廃止。GUI `input()` の即時モードに一本化。確定文字列の受取は `input()`、変換中は `imeget()`）
 - `toggle()`（導入直後に廃止。チェックボックスで代替）
 - `stick()`（完全削除。`getkey()` / `clicked()` で代替）
 - `width()`（完全削除。`screen()` に一本化）
 - `gzoom()` / `grotate()`（完全削除。`gcopy()` の拡縮・回転引数に統合）
-- `keyrep()`（完全削除。文字入力とリピートは `keychar()` に一本化。物理キーは `getkey()` を使用）
+- `keyrep()`（完全削除。文字入力とリピートは GUI `input()` に一本化。物理キーは `getkey()` を使用）
 - `redraw`（完全削除。使用時は未定義エラー）
 - `struct` 関連の構文・値・組み込み・テスト・文書
 - 同梱フォント `gui/mplus-1p-regular.ttf` と `gui/font-license.md`

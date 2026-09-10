@@ -1,8 +1,8 @@
 //go:build gui
 
 // Package gui implements the Ebiten WindowBackend (G0: window, text,
-// line input, close handling). Drawing (G1), polling input/audio/dialog
-// (G2) and widgets (G3) extend this file set.
+// close handling). Drawing (G1), polling input/audio/dialog (G2) and
+// widgets (G3) extend this file set.
 package gui
 
 import (
@@ -16,7 +16,6 @@ import (
 	"github.com/ebitenui/ebitenui/widget"
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/exp/textinput"
-	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 )
 
@@ -33,18 +32,10 @@ type textSeg struct {
 	fg   color.NRGBA
 }
 
-// lineReq is an in-progress ReadLine request (script goroutine waits).
-type lineReq struct {
-	prompt string
-	buf    []rune
-	done   chan string
-}
-
 // WindowBackend is a Backend rendering into an Ebiten window.
 // All state is guarded by mu; the Ebiten loop and the script goroutine
-// share it. Blocking calls (ReadLine) must come from the script goroutine.
-// Canvas images are touched only on the game thread: the script enqueues
-// draw commands processed by Update.
+// share it. Canvas images are touched only on the game thread: the
+// script enqueues draw commands processed by Update.
 type WindowBackend struct {
 	mu      sync.Mutex
 	w, h    int
@@ -56,7 +47,6 @@ type WindowBackend struct {
 	curY    int
 	gx, gy  int // pixel cursor for graphics (gcopy destination)
 	fg      color.NRGBA
-	line    *lineReq
 	// Font state (guarded by mu): face plus the cell metrics derived
 	// from it, so the mes/pos grid stays aligned at any size.
 	face     *text.GoTextFace
@@ -88,14 +78,14 @@ type WindowBackend struct {
 	// Dropped files (dropfiles/dropload; guarded by mu).
 	dropNames []string
 	dropFS    fs.FS // last snapshot (kept for dropload)
-	// Keychar repeat state (keychar(); guarded by mu).
+	// Immediate-input repeat state (input(); guarded by mu).
 	charSt charRep
 	ctrlSt []ctrlState // one slot per ctrlKeys entry
 	// IME state (ime/imeget; Field is pumped on the game thread only,
 	// mirrors are guarded by mu for script-side reads).
 	imeField   textinput.Field
 	imePrev    string // previous tick's committed field text (diff base)
-	imePending string // committed text awaiting the line editor
+	imePending string // committed text awaiting input()
 	// imeComposing is the uncommitted (conversion) text mirror.
 	imeComposing string
 	// Retained widgets (G3, game thread only except where noted).
@@ -226,50 +216,10 @@ func (b *WindowBackend) Update() error {
 	if b.wantQuit {
 		return ebiten.Termination
 	}
-	// The focused box already consumed its characters in pumpInputs
-	// (same tick); only feed the line editor here so keystrokes are
-	// never processed twice.
-	if b.line != nil {
-		// While the IME field is focused it owns the whole key
-		// stream (chars and editing keys); pumpIME mirrors it, so
-		// the line must not edit itself or keystrokes apply twice.
-		imeOn := b.imeField.IsFocused()
-		if imeOn {
-			if b.imePending != "" {
-				b.line.buf = append(b.line.buf, []rune(b.imePending)...)
-				b.imePending = ""
-			}
-		} else {
-			b.line.buf = append(b.line.buf, ebiten.AppendInputChars(nil)...)
-			if inpututil.IsKeyJustPressed(ebiten.KeyBackspace) && len(b.line.buf) > 0 {
-				b.line.buf = b.line.buf[:len(b.line.buf)-1]
-			}
-			if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
-				b.line.buf = b.line.buf[:0]
-			}
-		}
-		// Enter confirms the line, but mid-conversion it commits the
-		// composition instead (a second Enter confirms).
-		if (!imeOn || b.imeComposing == "") &&
-			(inpututil.IsKeyJustPressed(ebiten.KeyEnter) || inpututil.IsKeyJustPressed(ebiten.KeyKPEnter)) {
-			req := b.line
-			b.line = nil
-			// Advance past the editor line so later output continues below.
-			b.curX = 0
-			b.curY++
-			// Drop any field residue (e.g. an Enter newline the
-			// field kept): the entry is finished, and leftovers
-			// would leak into the next input().
-			b.imePending = ""
-			b.imePrev = ""
-			b.imeField.SetTextAndSelection("", 0, 0)
-			req.done <- string(req.buf)
-		}
-	}
 	return nil
 }
 
-// Draw renders buffered text and the active line editor.
+// Draw renders buffered text and widgets.
 func (b *WindowBackend) Draw(screen *ebiten.Image) {
 	screen.Fill(color.Black)
 	// Visible canvas: the currently selected buffer (0 = main).
@@ -284,33 +234,15 @@ func (b *WindowBackend) Draw(screen *ebiten.Image) {
 	copy(segs, b.segs)
 	partial, partX, partFg := b.partial, b.partX, b.partFg
 	curY := b.curY
-	var editor *lineReq
-	var edBuf string
-	comp := b.imeComposing
-	if b.line != nil {
-		editor = b.line
-		edBuf = string(b.line.buf)
-	}
 	face := b.face
 	charW, lineH := b.charW, b.lineH
 	ascent := face.Metrics().HAscent
-	// Caret x in pixels (measured: proportional fonts drift from cells).
-	// In-conversion text counts: the caret rides past it while typing.
-	caretX := 0.0
-	if editor != nil {
-		if w, _ := text.Measure(editor.prompt+edBuf+comp, face, 0); w > 0 {
-			caretX = w
-		}
-	}
 	b.mu.Unlock()
 
 	rows := int(float64(b.h) / lineH)
 	// Vertical scroll: drop lines above the visible window.
 	minY := 0
 	maxY := curY
-	if editor != nil {
-		maxY = curY + 1
-	}
 	if maxY-minY >= rows {
 		minY = maxY - rows + 1
 	}
@@ -331,18 +263,6 @@ func (b *WindowBackend) Draw(screen *ebiten.Image) {
 	}
 	if partial != "" {
 		drawText(partX, curY, partial, partFg)
-	}
-	if editor != nil {
-		drawText(0, curY, editor.prompt+edBuf, color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF})
-		// In-conversion IME text follows the caret in gray, measured
-		// in pixels (cell math drifts on proportional fonts).
-		if comp != "" && curY >= minY {
-			op := &text.DrawOptions{}
-			op.GeoM.Translate(caretX, float64(curY-minY)*lineH+ascent)
-			op.ColorScale.Reset()
-			op.ColorScale.ScaleWithColor(color.NRGBA{0x99, 0x99, 0x99, 0xFF})
-			text.Draw(screen, comp, face, op)
-		}
 	}
 	if b.ui != nil {
 		// Root fills the window; relocate on resize.

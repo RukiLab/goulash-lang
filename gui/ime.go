@@ -109,8 +109,8 @@ func imeDiff(prev, full string) (drop int, add string) {
 }
 
 // dropLastLocked removes n runes from the end of the IME consumer
-// stream: undrained pending first, then the line buffer or the
-// focused editor. Caller holds mu (game thread, from pumpIME).
+// stream: undrained pending first, then the focused editor. Caller
+// holds mu (game thread, from pumpIME).
 func (b *WindowBackend) dropLastLocked(n int) {
 	for n > 0 && b.imePending != "" {
 		pr := []rune(b.imePending)
@@ -118,13 +118,6 @@ func (b *WindowBackend) dropLastLocked(n int) {
 		n--
 	}
 	if n == 0 {
-		return
-	}
-	if b.line != nil {
-		for n > 0 && len(b.line.buf) > 0 {
-			b.line.buf = b.line.buf[:len(b.line.buf)-1]
-			n--
-		}
 		return
 	}
 	if ed := b.focusedLocked(); ed != nil {

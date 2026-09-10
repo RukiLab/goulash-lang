@@ -57,31 +57,17 @@ func (b *WindowBackend) Println(s string) {
 	b.curY++
 }
 
-// ReadLine shows a prompt and blocks until Enter (script goroutine only).
-// EOF (window closed mid-edit) yields ok=false.
+// ReadLine is a Backend-interface stub: the GUI has no blocking line
+// editor. GUI input() is immediate (see ReadImmediate); script text
+// entry uses inputbox widgets. Always reports EOF so any accidental
+// use ends promptly instead of hanging.
 //
-// IME: call ime(1) before input() to enable conversion input
-// (Windows/macOS/Web); committed text lands in the line, imeget()
-// reports the in-conversion string. Otherwise only committed text
-// arrives via AppendInputChars.
+// IME: focus an inputbox (or call ime(1)) to enable conversion input
+// (Windows/macOS/Web); committed text lands in the box or the
+// input() stream, imeget() reports the in-conversion string.
 func (b *WindowBackend) ReadLine(prompt string) (string, bool) {
-	req := &lineReq{prompt: prompt, done: make(chan string, 1)}
-	b.mu.Lock()
-	// The line editor takes the key stream: defocus boxes so
-	// keystrokes cannot split between the box and the line.
-	b.blurEditsLocked()
-	// Flush pending partial text above the editor line.
-	if b.partial != "" {
-		b.segs = append(b.segs, textSeg{x: b.partX, y: b.curY, s: b.partial, fg: b.partFg})
-		b.partial = ""
-	}
-	b.line = req
-	b.mu.Unlock()
-	s, ok := <-req.done
-	if !ok {
-		return "", false
-	}
-	return s, true
+	_ = prompt
+	return "", false
 }
 
 // Clear wipes the canvas and the text.
@@ -240,11 +226,10 @@ func (b *WindowBackend) SetFontFile(spec string, size int) error {
 	return nil
 }
 
-// caretPixels returns the active editor caret in device pixels,
+// caretPixels returns the focused inputbox caret in device pixels,
 // measured with the current face (proportional fonts drift from the
-// cell grid, so cell math misplaces the IME composition). The
-// focused inputbox wins over the input() line; ok is false with no
-// active editor.
+// cell grid, so cell math misplaces the IME composition). ok is
+// false with no focused editor.
 func (b *WindowBackend) caretPixels() (x, y float64, ok bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -258,11 +243,7 @@ func (b *WindowBackend) caretPixels() (x, y float64, ok bool) {
 		return float64(ed.rect.Min.X) + 4 + w - float64(ed.scroll),
 			float64(ed.rect.Min.Y), true
 	}
-	if b.line == nil {
-		return 0, 0, false
-	}
-	w, _ := text.Measure(b.line.prompt+string(b.line.buf)+b.imeComposing, b.face, 0)
-	return w, float64(b.curY) * b.lineH, true
+	return 0, 0, false
 }
 
 // MoveTo sets the cursor. In GUI it is pixel-based for the graphics

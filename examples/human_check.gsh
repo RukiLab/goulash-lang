@@ -152,12 +152,24 @@ if dialog("No を押してください", "yesno") == 0 {
     ng("T5 dialog no")
 }
 
-// ---- T6: IME ----
+// ---- T6: IME（即時inputポーリング） ----
 cls()
 pos(16, 40)
-mes("IME で日本語を入力して Enter")
+mes("10秒: 日本語を変換確定させ、最後にEnter")
+mes("(確定文字列が input() で読める)")
 ime(1)
-s = input("にほんご> ")
+s = ""
+t0 = tick()
+while tick() - t0 < 600 {
+    k = input()
+    if k != "" {
+        if instr(k, "\r") >= 0 {
+            break
+        }
+        s = s + k
+    }
+    await()
+}
 ime(0)
 cls()
 mes("入力=" + s)
@@ -211,52 +223,52 @@ sleep(1000)
 t0 = tick()
 n = 0
 while tick() - t0 < 300 {
-    if keychar() == "a" {
+    if input() == "a" {
         n = n + 1
     }
     await()
 }
 mes("fires=" + str(n))
 if n >= 2 {
-    ok("T8 keychar repeat")
+    ok("T8 input repeat")
 } else {
-    ng("T8 keychar repeat")
+    ng("T8 input repeat")
 }
 
 cls()
 pos(16, 40)
-mes("離して→5秒: A を押す（keychar で a が出る）")
+mes("離して→5秒: A を押す（input で a が出る）")
 sleep(1000)
 t0 = tick()
 hit = false
 while tick() - t0 < 300 {
-    if keychar() == "a" {
+    if input() == "a" {
         hit = true
     }
     await()
 }
 if hit {
-    ok("T8 keychar lower")
+    ok("T8 input lower")
 } else {
-    ng("T8 keychar lower")
+    ng("T8 input lower")
 }
 
 cls()
 pos(16, 40)
-mes("離して→5秒: Shift+A を押す（keychar で A が出る）")
+mes("離して→5秒: Shift+A を押す（input で A が出る）")
 sleep(1000)
 t0 = tick()
 hit = false
 while tick() - t0 < 300 {
-    if keychar() == "A" {
+    if input() == "A" {
         hit = true
     }
     await()
 }
 if hit {
-    ok("T8 keychar upper")
+    ok("T8 input upper")
 } else {
-    ng("T8 keychar upper")
+    ng("T8 input upper")
 }
 
 cls()
@@ -266,7 +278,7 @@ sleep(1000)
 t0 = tick()
 hit = false
 while tick() - t0 < 300 {
-    k = keychar()
+    k = input()
     if k != "" {
         if asc(k) == 8 {
             hit = true
@@ -275,9 +287,9 @@ while tick() - t0 < 300 {
     await()
 }
 if hit {
-    ok("T8 keychar backspace")
+    ok("T8 input backspace")
 } else {
-    ng("T8 keychar backspace")
+    ng("T8 input backspace")
 }
 
 // ---- T9: マウス ----

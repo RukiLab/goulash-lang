@@ -18,11 +18,13 @@ import (
 // TextInput so the caret position is known: the IME candidate window
 // anchors at the real caret (via caretPixels) instead of (0,0).
 //
-// Focus model: left-click focuses one box (blurring the rest and the
-// input() line); clicking elsewhere blurs. While focused, the box
-// owns the key stream: KeyChars() reports "" and Update routes
-// committed characters into the caret. Focusing also focuses the IME
-// field (conversion works out of the box); blurring blurs it.
+// Focus model: left-click focuses one box (blurring the rest);
+// clicking elsewhere blurs the box. The IME field itself is sticky:
+// it stays focused until ime(0) or box blur via Enter/Escape, so
+// conversion survives between keystrokes while polling input().
+// While a box is focused it owns the key stream: input() reports ""
+// and Update routes committed characters into the caret. Focusing a
+// box also focuses the IME field (conversion works out of the box).
 // ime(0) still force-disables conversion (the next focus re-enables).
 
 // inputState is one editor. Guarded by backend mu; game-thread
@@ -195,23 +197,12 @@ func (b *WindowBackend) pumpInputs() {
 	b.mu.Unlock()
 
 	// The IME field follows box focus so conversion works without
-	// an explicit ime(1) (game-thread only).
-	if ed != nil {
-		if !b.imeField.IsFocused() {
-			b.imeField.Focus()
-		}
-	} else if b.line == nil && b.imeField.IsFocused() && b.imePending == "" {
-		// No consumer left and nothing committed in flight: close
-		// the candidate window. (Pending text is kept for the next
-		// input()/focus so pre-typed conversion is not lost.)
-		b.mu.Lock()
-		comp := b.imeComposing
-		pending := b.imePending
-		b.mu.Unlock()
-		if comp == "" && pending == "" {
-			b.imeField.Blur()
-		}
-	}
+	// an explicit ime(1) (game-thread only). Focus is otherwise
+	// sticky: immediate-mode scripts poll input() with no box
+	// focused, and an idle auto-blur would kill conversion between
+	// keystrokes. Blur only via ime(0) or box defocus. Without a
+	// focused box the candidate window falls back to the origin
+	// (there is no caret to anchor it to).
 
 	if ed == nil {
 		return

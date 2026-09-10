@@ -29,19 +29,6 @@ func init() {
 		return Bool(down), nil
 	})
 
-	// keychar(): typed characters since the previous frame, as the OS
-	// reports them (layout/shift/caps-correct), with key-repeat: new
-	// text fires at once, held text refires after 24 ticks, then every
-	// 4 ticks. "" when nothing fires. Physical keys are getkey()
-	// territory; text entry (with repeat) is keychar() territory.
-	register("keychar", 0, 0, func(in *Interp, args []Value, at Pos) (Value, error) {
-		wb, err := guiBE(in, at, "keychar")
-		if err != nil {
-			return Null(), err
-		}
-		return Str(wb.KeyChars()), nil
-	})
-
 	// mousex()/mousey(): cursor position in window pixels.
 	register("mousex", 0, 0, func(in *Interp, args []Value, at Pos) (Value, error) {
 		wb, err := guiBE(in, at, "mousex")

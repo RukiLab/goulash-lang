@@ -265,8 +265,8 @@ func init() {
 		return Str(out), nil
 	})
 
-	// asc(s): code point of the first character (keychar() control
-	// characters included: asc(keychar()) is 8 for backspace).
+	// asc(s): code point of the first character (GUI input()
+	// control characters included: asc(input()) is 8 for backspace).
 	// Empty strings are an error.
 	register("asc", 1, 1, func(in *Interp, args []Value, at Pos) (Value, error) {
 		s, err := needString("asc", args, 0, at)

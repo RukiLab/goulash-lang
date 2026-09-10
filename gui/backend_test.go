@@ -113,12 +113,20 @@ func TestCaretPixelsHeadless(t *testing.T) {
 	if _, _, ok := b.caretPixels(); ok {
 		t.Fatal("no editor should report !ok")
 	}
+	done := make(chan struct{})
+	go func() {
+		_ = b.AddInput(5, 10, 20, 160, 36, "あxy")
+		close(done)
+	}()
+	if !pumpUntil(b, done, 10*time.Second) {
+		t.Fatal("AddInput never completed")
+	}
 	b.mu.Lock()
-	b.line = &lineReq{prompt: "あ>", buf: []rune("xy"), done: make(chan string, 1)}
+	b.widgets[5].edit.focused = true
 	b.mu.Unlock()
-	x, row, ok := b.caretPixels()
-	if !ok || x <= 0 {
-		t.Fatalf("caretPixels = %v,%v,%v", x, row, ok)
+	x, y, ok := b.caretPixels()
+	if !ok || x <= 0 || y != 20 {
+		t.Fatalf("caretPixels = %v,%v,%v", x, y, ok)
 	}
 }
 
@@ -230,7 +238,7 @@ func TestImeDiff(t *testing.T) {
 }
 
 // TestDropLastLocked checks tail truncation across the consumer
-// chain: pending first, then the line buffer, then the editor.
+// chain: pending first, then the focused editor.
 func TestDropLastLocked(t *testing.T) {
 	b := mustNew(t)
 	b.mu.Lock()
@@ -240,40 +248,56 @@ func TestDropLastLocked(t *testing.T) {
 		t.Fatalf("pending = %q, want abc", b.imePending)
 	}
 	b.imePending = "ab"
-	b.line = &lineReq{prompt: "> ", buf: []rune("XY"), done: make(chan string, 1)}
-	b.dropLastLocked(3)
-	if b.imePending != "" || string(b.line.buf) != "X" {
-		t.Fatalf("line = %q/%q", b.imePending, string(b.line.buf))
-	}
-	b.line = nil
 	if b.widgets == nil {
 		b.widgets = map[int]*widgetEntry{}
 	}
 	b.widgets[3] = &widgetEntry{id: 3, kind: wInput, selIdx: -1,
-		edit: &inputState{text: []rune("hello"), caret: 5, focused: true}}
+		edit: &inputState{text: []rune("XY"), caret: 2, focused: true}}
+	b.dropLastLocked(3)
+	if b.imePending != "" || string(b.widgets[3].edit.text) != "X" {
+		t.Fatalf("edit = %q/%q", b.imePending, string(b.widgets[3].edit.text))
+	}
+	b.widgets[3].edit.focused = false
+	b.widgets[3].edit.text = []rune("hello")
+	b.widgets[3].edit.caret = 5
+	b.imePending = ""
 	b.dropLastLocked(2)
 	e := b.widgets[3].edit
-	if string(e.text) != "hel" || e.caret != 3 {
-		t.Fatalf("edit = %q/%d", string(e.text), e.caret)
+	if string(e.text) != "hello" || e.caret != 5 {
+		t.Fatalf("unfocused edit = %q/%d (must be untouched)", string(e.text), e.caret)
 	}
 	b.mu.Unlock()
 }
 
-func TestKeyCharsHeadless(t *testing.T) {
+func TestReadImmediateHeadless(t *testing.T) {
 	b := mustNew(t)
 	// Headless: no loop, nothing typed.
-	if got := b.KeyChars(); got != "" {
-		t.Fatalf("KeyChars = %q, want empty", got)
+	if got := b.ReadImmediate(); got != "" {
+		t.Fatalf("ReadImmediate = %q, want empty", got)
 	}
-	// While the line editor owns the stream, keychar stays silent.
+	// While a focused inputbox owns the stream, input stays silent.
 	b.mu.Lock()
-	b.line = &lineReq{prompt: "> ", buf: nil, done: make(chan string, 1)}
+	if b.widgets == nil {
+		b.widgets = map[int]*widgetEntry{}
+	}
+	b.widgets[4] = &widgetEntry{id: 4, kind: wInput, selIdx: -1,
+		edit: &inputState{focused: true}}
 	b.mu.Unlock()
-	if got := b.KeyChars(); got != "" {
-		t.Fatalf("KeyChars during input = %q, want empty", got)
+	if got := b.ReadImmediate(); got != "" {
+		t.Fatalf("ReadImmediate during edit = %q, want empty", got)
+	}
+	// Drained IME commits flow through input().
+	b.mu.Lock()
+	b.widgets[4].edit.focused = false
+	b.imePending = "あ"
+	b.mu.Unlock()
+	if got := b.ReadImmediate(); got != "あ" {
+		t.Fatalf("ReadImmediate pending = %q, want あ", got)
 	}
 	b.mu.Lock()
-	b.line = nil
+	if b.imePending != "" {
+		t.Fatalf("pending not drained: %q", b.imePending)
+	}
 	b.mu.Unlock()
 }
 
@@ -400,12 +424,12 @@ func TestIMEStateHeadless(t *testing.T) {
 	}
 }
 
-// TestKeyCharsIdleHeadless: with no loop running nothing is typed,
-// so keychar reports "" and arms no session.
-func TestKeyCharsIdleHeadless(t *testing.T) {
+// TestReadImmediateIdleHeadless: with no loop running nothing is
+// typed, so input reports "" and arms no session.
+func TestReadImmediateIdleHeadless(t *testing.T) {
 	b := mustNew(t)
-	if got := b.KeyChars(); got != "" {
-		t.Fatalf("KeyChars = %q, want empty", got)
+	if got := b.ReadImmediate(); got != "" {
+		t.Fatalf("ReadImmediate = %q, want empty", got)
 	}
 	if b.charSt.live {
 		t.Fatal("charSt should be idle")

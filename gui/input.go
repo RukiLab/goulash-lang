@@ -16,7 +16,7 @@ const (
 	repInterval = 4
 )
 
-// charRep tracks one keychar repeat session in wall ticks.
+// charRep tracks one immediate-input repeat session in wall ticks.
 type charRep struct {
 	live bool
 	last string
@@ -24,7 +24,7 @@ type charRep struct {
 	seen int64 // last tick with input (grace tracking)
 }
 
-// ctrlKeys maps physical control keys to the character keychar()
+// ctrlKeys maps physical control keys to the character input()
 // reports for them (the ASCII code as a single-char string).
 // AppendInputChars never yields these; they are synthesized with
 // the same repeat timing below.
@@ -323,28 +323,38 @@ func (b *WindowBackend) SetCursorVisible(on bool) {
 	}
 }
 
-// KeyChars returns characters typed since the previous frame, as the
-// OS reports them (locale-dependent Unicode translation: layout,
-// shift, and caps-correct, e.g. Shift+A is "A"). Every-frame polling
-// is expected. New text fires at once; held text refires after
-// repDelay ticks, then every repInterval ticks; "" when nothing
-// fires. Control keys are synthesized as their ASCII characters
-// (backspace "\x08", tab "\x09", enter "\r", esc "\x1b", delete
-// "\x7f") with the same repeat timing, so an immediate-mode line
-// editor can be built on keychar() alone; use asc() for the codes.
-// While the input() line editor or a focused inputbox owns the key
-// stream it reports "" so keystrokes are not processed twice. Other
-// non-character keys (arrows, F-keys) never appear here; use
-// getkey() for those.
-func (b *WindowBackend) KeyChars() string {
+// ReadImmediate returns characters typed since the previous call, for
+// the GUI input() builtin (immediate mode: never blocks). Text comes
+// from the OS (locale-dependent Unicode translation: layout, shift,
+// and caps-correct, e.g. Shift+A is "A"), including IME-committed
+// text drained from the pending stream. New text fires at once; held
+// text refires after repDelay ticks, then every repInterval ticks;
+// "" when nothing fires. Control keys are synthesized as their ASCII
+// characters (backspace "\x08", tab "\x09", enter "\r", esc "\x1b",
+// delete "\x7f") with the same repeat timing; use asc() for the
+// codes, and break accumulation loops on "\r". While a focused
+// inputbox owns the key stream it reports "" so keystrokes are not
+// processed twice. While the IME field is focused it owns the whole
+// stream: raw characters are skipped (the field already holds them)
+// and only drained commits plus synthesized controls are reported.
+// Other non-character keys (arrows, F-keys) never appear here; use
+// getkey() for those. Every-frame polling is expected.
+func (b *WindowBackend) ReadImmediate() string {
 	b.mu.Lock()
-	owned := b.line != nil || b.focusedLocked() != nil
-	b.mu.Unlock()
-	if owned {
+	if b.focusedLocked() != nil {
+		b.mu.Unlock()
 		return ""
 	}
+	imeOn := b.imeField.IsFocused()
+	pend := b.imePending
+	b.imePending = ""
+	comp := b.imeComposing
+	b.mu.Unlock()
 	var sb strings.Builder
-	sb.WriteString(string(ebiten.AppendInputChars(nil)))
+	sb.WriteString(pend)
+	if !imeOn {
+		sb.WriteString(string(ebiten.AppendInputChars(nil)))
+	}
 	now := b.Tick()
 	down := make([]bool, len(ctrlKeys))
 	for i, ck := range ctrlKeys {
@@ -354,6 +364,12 @@ func (b *WindowBackend) KeyChars() string {
 	defer b.mu.Unlock()
 	if len(b.ctrlSt) != len(ctrlKeys) {
 		b.ctrlSt = make([]ctrlState, len(ctrlKeys))
+	}
+	// Mid-conversion every control key belongs to the IME (editing
+	// or committing the composition); synthesizing here would apply
+	// keystrokes twice.
+	if imeOn && comp != "" {
+		return charStep(&b.charSt, sb.String(), now)
 	}
 	for i, ck := range ctrlKeys {
 		if ctrlStep(&b.ctrlSt[i], down[i], now) {
