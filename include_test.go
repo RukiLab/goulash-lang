@@ -32,6 +32,51 @@ func writeFile(t *testing.T, path, src string) {
 	}
 }
 
+func TestModeDirective(t *testing.T) {
+	dir := t.TempDir()
+	modeOf := func(name, src string) string {
+		t.Helper()
+		writeFile(t, filepath.Join(dir, name), src)
+		_, mode, err := CombineFileMode(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return mode
+	}
+	// Omitted means gui.
+	if m := modeOf("a.gsh", "mes(\"hi\")\n"); m != "gui" {
+		t.Fatalf("default = %q, want gui", m)
+	}
+	if m := modeOf("b.gsh", "#mode cli\nmes(\"hi\")\n"); m != "cli" {
+		t.Fatalf("cli = %q", m)
+	}
+	if m := modeOf("c.gsh", "#mode gui\nmes(\"hi\")\n"); m != "gui" {
+		t.Fatalf("gui = %q", m)
+	}
+	// Last active one wins.
+	if m := modeOf("d.gsh", "#mode cli\n#mode gui\n"); m != "gui" {
+		t.Fatalf("last-wins = %q", m)
+	}
+	// Inactive branches do not count.
+	if m := modeOf("e.gsh", "#ifdef NOPE\n#mode cli\n#endif\n"); m != "gui" {
+		t.Fatalf("inactive = %q", m)
+	}
+	writeFile(t, filepath.Join(dir, "lib.gsh"), "#mode cli\n")
+	if m := modeOf("f.gsh", "#include \"lib.gsh\"\n"); m != "cli" {
+		t.Fatalf("include = %q", m)
+	}
+	// Bad values are an error; the unknown-directive hint lists #mode.
+	writeFile(t, filepath.Join(dir, "x.gsh"), "#mode bogus\n")
+	if _, _, err := CombineFileMode(filepath.Join(dir, "x.gsh")); err == nil ||
+		!strings.Contains(err.Error(), "#mode cli") {
+		t.Fatalf("bad mode err = %v", err)
+	}
+	if _, err := CombineSource("", "#bogus\n", ""); err == nil ||
+		!strings.Contains(err.Error(), "#mode") {
+		t.Fatalf("unknown directive hint = %v", err)
+	}
+}
+
 func TestIncludeBasic(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "lib.gsh"), "def double(x) {\nreturn x * 2\n}\nanswer = 20\n")

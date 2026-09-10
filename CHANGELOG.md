@@ -28,6 +28,7 @@ Goulash 処理系の変更履歴です。v0.1 は未リリースのため、す�
 - `keychar()` の制御文字対応（GUI）：Backspace・Tab・Enter・Esc・Delete を ASCII 文字（`\x08`・`\t`・`\r`・`\x1b`・`\x7f`）で返却（同じリピート付き）
 - `color(r, g, b [, a])`：α値（`0` 透明～`255` 不透明）に対応。GUI の文字・図形描画に適用（`galpha` とは乗算）。CUI の端末文字αは無視
 - VS Code 拡張に F5 実行を追加（`F5` = `gsh run`、`Ctrl+F5` = `--gui` 付き。`gsh` の PATH 登録が前提）
+- `#mode cli` / `#mode gui` 指示子：`gsh run` の実行モードをコード内で指定（`#include` 先も含めた有効行の最後が勝つ。REPL は常に CUI）
 
 ### 変更（破壊的）
 - コマンド名：`hsp-next` → `gou` → `gsh`。モジュールも `gsh`（`gsh/gui`）に統一。言語名 `Goulash` は維持
@@ -49,6 +50,7 @@ Goulash 処理系の変更履歴です。v0.1 は未リリースのため、す�
 - `Foreground()` / 図形描画系を `[3]int` から `[4]int`（RGBA）に変更
 - `exec()` を非同期起動に変更（起動成功で `0` を返してすぐ戻る。終了コードは返さない。`pipeexec()` は終了待ち＋取込のまま）
 - CUI の即時キー入力は見送り（`keychar()` は GUI 専用、`input()` は行単位のまま。新規依存を避けるため）
+- `gsh run` の既定を GUI モードに変更（`#mode` 省略時はウィンドウを開く。`--gui` は強制指定として残し、`--cui` を追加。フラグは `#mode` より優先）
 
 ### 修正
 - ボタン画像がホバー・押下で切り替わらない不具合を修正（ebitenui の切替は `TextAndImage` 併用時のみ有効）

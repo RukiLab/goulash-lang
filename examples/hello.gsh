@@ -1,3 +1,4 @@
+#mode cli
 mes("Hello")
 mes("World")
 x = 10 + 2 * 3

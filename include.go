@@ -3,6 +3,9 @@
 // A directive is a whole line whose first non-space character is `#`.
 // Supported directives (minimal set):
 //
+//	#mode cli|gui  run mode for `gsh run` (last active one wins;
+//	omitted means gui)
+//
 //	#include "path"   splice a file (once-semantics, circular = error)
 //	#define NAME lit  constant: one int/float/string/bool literal
 //	                  (optional leading `-` for numbers)
@@ -34,8 +37,19 @@ import (
 // CombineFile reads entry and splices its #include tree into one token
 // stream (ending with EOF). Display paths stay relative when possible.
 func CombineFile(entry string) ([]Token, error) {
+	toks, _, err := CombineFileMode(entry)
+	return toks, err
+}
+
+// CombineFileMode is CombineFile plus the run mode: the last active
+// `#mode cli|gui` in the tree, or "gui" when absent.
+func CombineFileMode(entry string) ([]Token, string, error) {
 	st := newIncluder()
-	return st.combineFile(entry, "")
+	toks, err := st.combineFile(entry, "")
+	if err != nil {
+		return nil, "gui", err
+	}
+	return toks, st.runMode(), nil
 }
 
 // CombineSource splices directives found in src (a REPL input or test
@@ -55,6 +69,16 @@ type includer struct {
 	// defines flow into (and out of) included files in line order.
 	defines map[string]ppDefine
 	conds   []ppFrame
+	// Run mode: last active `#mode` argument ("cli"/"gui", "" unset).
+	mode string
+}
+
+// runMode reports the effective mode ("gui" when unset).
+func (st *includer) runMode() string {
+	if st.mode == "cli" {
+		return "cli"
+	}
+	return "gui"
 }
 
 // ppDefine is a #define constant: one literal token.
@@ -215,6 +239,11 @@ func (st *includer) combineSource(display, src, parentDir string) ([]Token, erro
 				}
 				return nil, &LexError{File: display, Line: i + 1, Column: 1, Msg: msg}
 			}
+		case dirMode:
+			// Last active one wins (includes count: the tree shares st).
+			if active[i] {
+				st.mode = d.arg
+			}
 		}
 	}
 	if len(st.conds) != condDepth {
@@ -303,6 +332,7 @@ const (
 	dirElse
 	dirEndif
 	dirError
+	dirMode
 )
 
 // directive is one parsed `#...` line: arg holds the include path,
@@ -329,7 +359,7 @@ func parseDirective(line string) (*directive, error) {
 	word, tail := rest[:i], strings.TrimLeft(rest[i:], " \t")
 	// A sharp alone (`#`) or `# 123`: no directive word.
 	unknown := func() (*directive, error) {
-		return nil, fmt.Errorf("不明なディレクティブ %q です（#include/#define/#ifdef/#ifndef/#else/#endif/#error を使用してください）", "#"+word)
+		return nil, fmt.Errorf("不明なディレクティブ %q です（#include/#define/#ifdef/#ifndef/#else/#endif/#error/#mode を使用してください）", "#"+word)
 	}
 	switch word {
 	case "include":
@@ -376,6 +406,12 @@ func parseDirective(line string) (*directive, error) {
 		return &directive{kind: dirEndif}, nil
 	case "error":
 		return &directive{kind: dirError, arg: strings.TrimSpace(tail)}, nil
+	case "mode":
+		name, extra := splitDirectiveArg(tail)
+		if (name != "cli" && name != "gui") || strings.TrimSpace(extra) != "" {
+			return nil, fmt.Errorf("不正な #mode ディレクティブです（#mode cli または #mode gui が必要です）")
+		}
+		return &directive{kind: dirMode, arg: name}, nil
 	}
 	return unknown()
 }

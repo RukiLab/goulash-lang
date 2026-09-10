@@ -1,3 +1,4 @@
+#mode cli
 #include "include_util.gsh"
 
 banner("include demo")

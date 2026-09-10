@@ -70,7 +70,7 @@ GUI機能を使用する場合は、ビルドタグ `gui` を付けます。
 ```sh
 go build -tags gui ./...
 go test -tags gui ./...
-go run -tags gui . run examples/gui_hello.gsh --gui
+go run -tags gui . run examples/gui_hello.gsh
 ```
 
 > `TestGuiRender` など一部のGUIテストは Ebiten の制約により、1プロセスにつき1回だけウィンドウを生成します。2回目以降は自動的にスキップされます。
@@ -80,7 +80,7 @@ go run -tags gui . run examples/gui_hello.gsh --gui
 # コマンドの使い方
 
 ```text
-gsh run <file.gsh> [--keep] [--gui] [-- args...]   スクリプトを実行します
+gsh run <file.gsh> [--keep] [--gui] [--cui] [-- args...]   スクリプトを実行します
 gsh repl                                            対話環境（REPL）を起動します
 gsh lex <file.gsh>                                  字句トークン列を表示します
 gsh parse <file.gsh>                                構文木（AST）を表示します
@@ -101,13 +101,17 @@ gsh run examples/hello.gsh
 
 v0.1 では何も行いませんが、指定してもエラーにはなりません。
 
-### `--gui`
+### `--gui` / `--cui`
 
-GUIビルドでのみ有効です。
+コマンドラインからの強制指定で、コード内の `#mode` より優先されます。
 
 ```sh
 gsh run examples/gui_hello.gsh --gui
+gsh run examples/gui_hello.gsh --cui
 ```
+
+`--gui` はウィンドウを開きます（GUIビルドでのみ有効）。
+`--cui` は端末で実行します（GUI組込の呼出は未定義エラーになります）。
 
 ### コマンドライン引数
 
@@ -121,9 +125,26 @@ gsh run main.gsh -- hello world
 
 `-` から始まる引数は `--` の後に記述してください。GUIビルドで `--` より前に指定されたオプション形式の引数はエラーになります。
 
+## `#mode`
+
+実行モードをコード内で指定します（`gsh run` のみ有効。REPL は常に CUI です）。
+
+```hsp
+#mode cli
+```
+
+- `#mode cli`：端末で実行します（ウィンドウを開きません）
+- `#mode gui`：ウィンドウを開いて実行します
+- 省略時：`gui`（ウィンドウを開きます）
+- 複数ある場合：有効な行の最後が勝ちます（`#ifdef` の無効分岐内は無視、`#include` 先も対象）
+- `--gui` / `--cui` が指定された場合はそちらが優先されます
+
+GUI モードには `-tags gui` ビルドが必要です。CUI ビルドで GUI モードの
+スクリプトを実行すると、起動前にエラーになります。
+
 ## `gsh repl`
 
-REPLを起動します。
+REPLを起動します（常に CUI。`#mode` は無視されます）。
 
 ```sh
 gsh repl
@@ -1308,7 +1329,7 @@ remove
 # 10.14 GUI・ウィンドウ
 
 > このグループはGUI機能を中心とした関数です。
-> GUI機能を使用するには `-tags gui` でビルドし、`gsh run ... --gui` で実行します。
+> GUI機能を使用するには `-tags gui` でビルドします（`#mode` 省略時は自動でウィンドウが開きます）。
 
 | 関数                | 説明              | GUIでの挙動                | CUIでの挙動                     |
 | ----------------- | --------------- | ---------------------- | --------------------------- |
@@ -1733,10 +1754,10 @@ go build -tags gui ./...
 でビルドし、
 
 ```sh
-gsh run program.gsh --gui
+gsh run program.gsh
 ```
 
-で実行します。
+で実行します（`#mode` 省略時は GUI モードでウィンドウが開きます）。
 
 GUIモードでは、主に以下の機能が利用できます。
 
@@ -1897,7 +1918,7 @@ go test -tags gui ./...
 人手検証テスト（実ウィンドウでの目視・操作確認）：
 
 ```sh
-go run -tags gui . run examples/human_check.gsh --gui
+go run -tags gui . run examples/human_check.gsh
 ```
 
 主要なテスト：
@@ -1923,7 +1944,7 @@ gui/backend_test.go
 
 # まとめ：GUIとCUIの使い分け
 
-`Goulash` の標準実行環境はCUIです。
+`Goulash` の標準実行モードはGUIです（`#mode` 省略時はウィンドウが開きます）。端末で実行するには `#mode cli` を指定します。
 
 ```text
 CUI

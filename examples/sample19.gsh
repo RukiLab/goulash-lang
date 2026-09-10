@@ -1,3 +1,4 @@
+#mode cli
 // HSP後継言語 v0.1 サンプル (§19)
 def greet(p) {
     mes("Hello, " + p.name)

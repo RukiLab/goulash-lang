@@ -1,3 +1,4 @@
+#mode cli
 def banner(title) {
     mes("=== " + title + " ===")
 }

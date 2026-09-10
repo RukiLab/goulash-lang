@@ -43,11 +43,22 @@ func ParseTokens(toks []Token) (*Program, error) {
 
 // ParseFile reads a script file, splices its #include tree, and parses it.
 func ParseFile(path string) (*Program, error) {
-	toks, err := CombineFile(path)
+	prog, _, err := ParseFileMode(path)
+	return prog, err
+}
+
+// ParseFileMode is ParseFile plus the run mode: the last active
+// `#mode cli|gui` in the tree, or "gui" when absent.
+func ParseFileMode(path string) (*Program, string, error) {
+	toks, mode, err := CombineFileMode(path)
 	if err != nil {
-		return nil, err
+		return nil, "gui", err
 	}
-	return ParseTokens(toks)
+	prog, err := ParseTokens(toks)
+	if err != nil {
+		return nil, mode, err
+	}
+	return prog, mode, nil
 }
 
 type parser struct {

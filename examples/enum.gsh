@@ -1,3 +1,4 @@
+#mode cli
 // enum（連番定数）の作例
 enum Color { Red, Green, Blue }
 mes(Color_Red)

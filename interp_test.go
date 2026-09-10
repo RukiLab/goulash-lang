@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"os"
 	"strings"
 	"testing"
 )
@@ -315,11 +314,8 @@ func TestFormerKeywordsAreIdents(t *testing.T) {
 }
 
 func TestSample19Golden(t *testing.T) {
-	src, err := os.ReadFile("examples/sample19.gsh")
-	if err != nil {
-		t.Fatal(err)
-	}
-	prog, err := Parse(string(src))
+	// Via ParseFile so preprocessor lines (#mode cli) are honored.
+	prog, err := ParseFile("examples/sample19.gsh")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

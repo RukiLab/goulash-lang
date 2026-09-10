@@ -21,12 +21,14 @@ import (
 const usage = `gsh: Goulash v0.1 インタプリタ
 
 使い方:
-  gsh run <file.gsh> [--keep] [--gui] [-- args...]   スクリプトを実行します
+  gsh run <file.gsh> [--keep] [--gui] [--cui] [-- args...]   スクリプトを実行します
   gsh repl                               対話環境（REPL）を起動します
   gsh lex <file.gsh>                    字句トークン列を出力します（デバッグ用）
   gsh parse <file.gsh>                  構文木（AST）を出力します（デバッグ用）
 
---gui はウィンドウを開きます（-tags gui ビルドが必要です）。
+実行モードはコード内の #mode cli/gui で指定します（省略時は gui で
+ウィンドウを開きます。--gui/--cui はコマンドラインからの強制指定で、
+#mode より優先されます）。GUI モードには -tags gui ビルドが必要です。
 --keep は将来の互換性のために予約されており、現在は何も行いません。`
 
 // GUI hooks, wired by guihook_gui.go under -tags gui.
@@ -59,7 +61,8 @@ func main() {
 func cmdRun(args []string) {
 	var file string
 	var scriptArgs []string
-	guiMode := false
+	forceGUI := false
+	forceCUI := false
 	verbatim := false // after `--`: everything is a script argument
 	for _, a := range args {
 		if verbatim {
@@ -74,7 +77,11 @@ func cmdRun(args []string) {
 			continue // reserved; tree-walk generates no files
 		}
 		if a == "--gui" {
-			guiMode = true
+			forceGUI = true
+			continue
+		}
+		if a == "--cui" {
+			forceCUI = true
 			continue
 		}
 		if file == "" && strings.HasPrefix(a, "-") {
@@ -94,10 +101,20 @@ func cmdRun(args []string) {
 		fmt.Fprintln(os.Stderr, "run にはスクリプトファイルが必要です")
 		os.Exit(2)
 	}
-	prog, err := ParseFile(file)
+	prog, mode, err := ParseFileMode(file)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "エラー:", err)
 		os.Exit(1)
+	}
+	// Precedence: --gui/--cui flags beat the in-code #mode; without
+	// flags #mode cli runs console, otherwise (gui or omitted) a
+	// window opens.
+	guiMode := mode == "gui"
+	if forceCUI {
+		guiMode = false
+	}
+	if forceGUI {
+		guiMode = true
 	}
 	if guiMode {
 		runGUI(file, prog, scriptArgs)
@@ -118,7 +135,7 @@ func cmdRun(args []string) {
 func runGUI(file string, prog *Program, scriptArgs []string) {
 	_ = file
 	if newGUIBackend == nil || runGUILoop == nil {
-		fmt.Fprintln(os.Stderr, "エラー: --gui は GUI ビルドが必要です（go run -tags gui . run "+file+"）")
+		fmt.Fprintln(os.Stderr, "エラー: GUI モードには GUI ビルドが必要です（go run -tags gui . run "+file+"）。CUI で実行するには #mode cli を指定してください")
 		os.Exit(2)
 	}
 	be, err := newGUIBackend(640, 480)

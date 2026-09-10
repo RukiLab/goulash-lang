@@ -1,3 +1,4 @@
+#mode cli
 // Builtin function showcase (HSP-derived, all functions).
 randomize(1234)
 
