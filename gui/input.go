@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/hajimehoshi/ebiten/v2"
-	"github.com/hajimehoshi/ebiten/v2/inpututil"
 )
 
 // Key-repeat timing in ticks (@60fps): first fire is immediate on a new
@@ -16,132 +15,37 @@ const (
 	repInterval = 4
 )
 
-// repCodes is the keyrep scan set (same numbering as getkey),
-// ascending: the first pressed code wins. Modifier codes (16/17/18)
-// are deferred: they fire only when no other key is pressed, so
-// Shift+A reports the letter (shifted), not the modifier.
-var repCodes []int
-
-// isModCode reports modifier codes deferred by the keyrep scan.
-func isModCode(code int) bool {
-	return code == 16 || code == 17 || code == 18
+// charRep tracks one keychar repeat session in wall ticks.
+type charRep struct {
+	live bool
+	last string
+	next int64 // tick threshold for the next fire
+	seen int64 // last tick with input (grace tracking)
 }
 
-func init() {
-	for _, c := range []int{8, 9, 13, 16, 17, 18, 27, 32, 33, 34, 35, 36, 37, 38, 39, 40, 45, 46} {
-		repCodes = append(repCodes, c)
-	}
-	for c := 48; c <= 57; c++ {
-		repCodes = append(repCodes, c)
-	}
-	for c := 65; c <= 90; c++ {
-		repCodes = append(repCodes, c)
-	}
-	for c := 112; c <= 123; c++ {
-		repCodes = append(repCodes, c)
-	}
-	for _, c := range []int{186, 187, 188, 189, 190, 191, 192, 219, 220, 221, 222} {
-		repCodes = append(repCodes, c)
-	}
-}
-
-// repState tracks one repeat session.
-type repState struct {
-	code int
-	dur  int64
-	next int64
-}
-
-// repStep advances the repeat state machine over the observed
-// (code, duration) pair and returns the firing code, or 0.
-// A new key fires at once; a re-press after release (duration running
-// backwards) fires at once too; a held key refires after repDelay
-// ticks, then every repInterval ticks.
-func repStep(st *repState, code int, dur int64) int {
-	if code == 0 {
-		st.code, st.dur, st.next = 0, 0, 0
-		return 0
-	}
-	if code != st.code || dur < st.dur {
-		st.code, st.dur = code, dur
-		st.next = dur + repDelay
-		return code
-	}
-	st.dur = dur
-	if dur >= st.next {
-		st.next = dur + repInterval
-		return code
-	}
-	return 0
-}
-
-// modPressDur returns the press duration of a modifier code,
-// either side (left or right); 0 when neither is held.
-func modPressDur(code int) int64 {
-	var l, r ebiten.Key
-	switch code {
-	case 16:
-		l, r = ebiten.KeyShiftLeft, ebiten.KeyShiftRight
-	case 17:
-		l, r = ebiten.KeyControlLeft, ebiten.KeyControlRight
-	case 18:
-		l, r = ebiten.KeyAltLeft, ebiten.KeyAltRight
-	default:
-		return 0
-	}
-	dl := int64(inpututil.KeyPressDuration(l))
-	dr := int64(inpututil.KeyPressDuration(r))
-	if dl > dr {
-		return dl
-	}
-	return dr
-}
-
-// scanRepKeys returns the first pressed code (and its duration),
-// skipping modifier codes unless mods is true.
-func scanRepKeys(mods bool) (int, int64) {
-	for _, c := range repCodes {
-		if isModCode(c) != mods {
-			continue
+// charStep maps a per-frame rune snapshot to a firing string.
+// New text fires at once; held text refires after repDelay ticks,
+// then every repInterval ticks. Gaps under repInterval ticks keep the
+// session (bridging OS auto-repeat gaps); longer silence, or different
+// text, starts a new session.
+func charStep(st *charRep, s string, now int64) string {
+	if s == "" {
+		if st.live && now-st.seen > repInterval {
+			st.live = false
 		}
-		var d int64
-		if mods {
-			d = modPressDur(c)
-		} else {
-			k, ok := keyFor(c)
-			if !ok {
-				continue
-			}
-			d = int64(inpututil.KeyPressDuration(k))
-		}
-		if d > 0 {
-			return c, d
-		}
+		return ""
 	}
-	return 0, 0
-}
-
-// KeyRepeat returns the firing key code with key-repeat semantics,
-// or 0 when nothing fires. A newly pressed (or switched) key fires at
-// once; a held key refires after repDelay ticks, then every
-// repInterval ticks. Letters fire lowercase (97-122) unless shift is
-// held (65-90); shifted digits fire their US-layout symbols.
-// Modifiers fire only when pressed alone, so Shift+A reports 65.
-// Script-thread safe.
-func (b *WindowBackend) KeyRepeat() int {
-	code, dur := scanRepKeys(false)
-	if code == 0 {
-		code, dur = scanRepKeys(true)
+	if !st.live || s != st.last {
+		st.live, st.last, st.seen = true, s, now
+		st.next = now + repDelay
+		return s
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	st := &repState{code: b.repCode, dur: b.repDur, next: b.repNext}
-	fired := repStep(st, code, dur)
-	b.repCode, b.repDur, b.repNext = st.code, st.dur, st.next
-	if fired == 0 {
-		return 0
+	st.seen = now
+	if now >= st.next {
+		st.next = now + repInterval
+		return s
 	}
-	return shiftCode(fired, shiftHeld())
+	return ""
 }
 
 // Polling input (G2). Key/mouse queries hit ebiten directly (thread-safe);
@@ -229,53 +133,6 @@ func keyFor(code int) (ebiten.Key, bool) {
 // shiftHeld reports either shift key; ctrlHeld / altHeld likewise.
 func shiftHeld() bool {
 	return ebiten.IsKeyPressed(ebiten.KeyShiftLeft) || ebiten.IsKeyPressed(ebiten.KeyShiftRight)
-}
-
-// shiftDigit maps 0-9 to their shifted (US-layout) symbol codes:
-// ) ! @ # $ % ^ & * (.
-func shiftDigit(code int) int {
-	switch code {
-	case 48:
-		return 41
-	case 49:
-		return 33
-	case 50:
-		return 64
-	case 51:
-		return 35
-	case 52:
-		return 36
-	case 53:
-		return 37
-	case 54:
-		return 94
-	case 55:
-		return 38
-	case 56:
-		return 42
-	case 57:
-		return 40
-	}
-	return code
-}
-
-// shiftCode translates a firing keyrep code for a held shift key:
-// letters become uppercase (65-90), digits become symbols, anything
-// else passes through. Without shift, letters fire lowercase (97-122).
-func shiftCode(code int, shift bool) int {
-	if code >= 65 && code <= 90 {
-		if !shift {
-			return code + 32
-		}
-		return code
-	}
-	if code >= 48 && code <= 57 {
-		if shift {
-			return shiftDigit(code)
-		}
-		return code
-	}
-	return code
 }
 
 // clickButton maps script button numbers to ebiten buttons.
@@ -427,10 +284,11 @@ func (b *WindowBackend) SetCursorVisible(on bool) {
 // KeyChars returns characters typed since the previous frame, as the
 // OS reports them (locale-dependent Unicode translation: layout,
 // shift, and caps-correct, e.g. Shift+A is "A"). Every-frame polling
-// is expected; "" when nothing was typed. While the input() line
-// editor owns the key stream it reports "" so keystrokes are not
-// processed twice. Non-character keys (arrows, F-keys) never appear
-// here; use keyrep()/getkey() for those.
+// is expected. New text fires at once; held text refires after
+// repDelay ticks, then every repInterval ticks; "" when nothing
+// fires. While the input() line editor owns the key stream it reports
+// "" so keystrokes are not processed twice. Non-character keys
+// (arrows, F-keys) never appear here; use getkey() for those.
 func (b *WindowBackend) KeyChars() string {
 	b.mu.Lock()
 	active := b.line != nil
@@ -438,7 +296,11 @@ func (b *WindowBackend) KeyChars() string {
 	if active {
 		return ""
 	}
-	return string(ebiten.AppendInputChars(nil))
+	s := string(ebiten.AppendInputChars(nil))
+	now := b.Tick()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return charStep(&b.charSt, s, now)
 }
 
 // KeyDown reports whether a script key code is held. Modifier codes

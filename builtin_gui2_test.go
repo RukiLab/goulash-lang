@@ -55,11 +55,7 @@ func TestGuiBuiltinValidation(t *testing.T) {
 	if _, err := guiEval(t, "mmvol(1, 200)"); err == nil {
 		t.Fatal("mmvol out-of-range should error")
 	}
-	v, err := guiEval(t, "keyrep()")
-	if err != nil || v.K != KInt || v.I != 0 {
-		t.Fatalf("keyrep(): got %v, %v", v, err)
-	}
-	v, err = guiEval(t, "keychar()")
+	v, err := guiEval(t, "keychar()")
 	if err != nil || v.K != KString || v.S != "" {
 		t.Fatalf("keychar(): got %v, %v", v, err)
 	}

@@ -206,42 +206,21 @@ if hit {
 
 cls()
 pos(16, 40)
-mes("離して→5秒: A 単体押し（小文字 97 が出る）")
+mes("離して→5秒: A を3秒ほど長押し（リピートで複数回 a が出る）")
 sleep(1000)
 t0 = tick()
-code = 0
+n = 0
 while tick() - t0 < 300 {
-    c = keyrep()
-    if c != 0 {
-        code = c
+    if keychar() == "a" {
+        n = n + 1
     }
     await()
 }
-mes("code=" + str(code))
-if code == 97 {
-    ok("T8 keyrep lower")
+mes("fires=" + str(n))
+if n >= 2 {
+    ok("T8 keychar repeat")
 } else {
-    ng("T8 keyrep lower")
-}
-
-cls()
-pos(16, 40)
-mes("離して→5秒: Shift+A（大文字 65 が出る）")
-sleep(1000)
-t0 = tick()
-code = 0
-while tick() - t0 < 300 {
-    c = keyrep()
-    if c != 0 {
-        code = c
-    }
-    await()
-}
-mes("code=" + str(code))
-if code == 65 {
-    ok("T8 keyrep upper")
-} else {
-    ng("T8 keyrep upper")
+    ng("T8 keychar repeat")
 }
 
 cls()

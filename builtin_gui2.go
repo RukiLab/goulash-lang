@@ -29,23 +29,11 @@ func init() {
 		return Bool(down), nil
 	})
 
-	// keyrep(): firing key code with key-repeat, or 0 when nothing
-	// fires. A new press fires at once; a held key refires after 24
-	// ticks, then every 4 ticks. Letters fire lowercase (97-122)
-	// unless shift is held (65-90); shifted digits fire their
-	// US-layout symbols (e.g. shift+1 is 33 '!').
-	register("keyrep", 0, 0, func(in *Interp, args []Value, at Pos) (Value, error) {
-		wb, err := guiBE(in, at, "keyrep")
-		if err != nil {
-			return Null(), err
-		}
-		return Int(int64(wb.KeyRepeat())), nil
-	})
-
 	// keychar(): typed characters since the previous frame, as the OS
-	// reports them (layout/shift/caps-correct). "" when none.
-	// Physical keys are keyrep()/getkey() territory; text entry is
-	// keychar() territory.
+	// reports them (layout/shift/caps-correct), with key-repeat: new
+	// text fires at once, held text refires after 24 ticks, then every
+	// 4 ticks. "" when nothing fires. Physical keys are getkey()
+	// territory; text entry (with repeat) is keychar() territory.
 	register("keychar", 0, 0, func(in *Interp, args []Value, at Pos) (Value, error) {
 		wb, err := guiBE(in, at, "keychar")
 		if err != nil {

@@ -122,40 +122,43 @@ func TestCaretPixelsHeadless(t *testing.T) {
 	}
 }
 
-func TestRepStep(t *testing.T) {
-	var st repState
-	if got := repStep(&st, 0, 0); got != 0 {
-		t.Fatalf("idle = %d, want 0", got)
+func TestCharStep(t *testing.T) {
+	var st charRep
+	if got := charStep(&st, "", 0); got != "" {
+		t.Fatalf("idle = %q, want empty", got)
 	}
-	// New press fires at once.
-	if got := repStep(&st, 65, 1); got != 65 {
-		t.Fatalf("new press = %d, want 65", got)
+	// New text fires at once.
+	if got := charStep(&st, "a", 0); got != "a" {
+		t.Fatalf("new = %q, want a", got)
 	}
 	// Holding below the delay stays quiet.
-	if got := repStep(&st, 65, 10); got != 0 {
-		t.Fatalf("hold = %d, want 0", got)
+	if got := charStep(&st, "a", 10); got != "" {
+		t.Fatalf("hold = %q, want empty", got)
 	}
 	// At the delay it refires, then every interval.
-	if got := repStep(&st, 65, 1+repDelay); got != 65 {
-		t.Fatalf("delay fire = %d, want 65", got)
+	if got := charStep(&st, "a", repDelay); got != "a" {
+		t.Fatalf("delay fire = %q, want a", got)
 	}
-	if got := repStep(&st, 65, 1+repDelay+repInterval); got != 65 {
-		t.Fatalf("interval fire = %d, want 65", got)
+	if got := charStep(&st, "a", repDelay+repInterval); got != "a" {
+		t.Fatalf("interval fire = %q, want a", got)
 	}
-	// Release resets; a re-press (duration backwards) fires at once
-	// even for the same code (cross-check staleness fix).
-	if got := repStep(&st, 0, 0); got != 0 {
-		t.Fatalf("release = %d, want 0", got)
+	// OS auto-repeat gaps (empty ticks under grace) keep the session.
+	if got := charStep(&st, "", repDelay+repInterval+1); got != "" {
+		t.Fatalf("gap = %q, want empty", got)
 	}
-	if got := repStep(&st, 65, 300); got != 65 {
-		t.Fatalf("long hold = %d, want 65", got)
+	if got := charStep(&st, "a", repDelay+repInterval+2); got != "" {
+		t.Fatalf("gap resume = %q, want empty (before next)", got)
 	}
-	if got := repStep(&st, 65, 2); got != 65 {
-		t.Fatalf("re-press = %d, want 65", got)
+	// Long silence ends the session; re-press fires at once.
+	if got := charStep(&st, "", repDelay+repInterval+2+repInterval+1); got != "" {
+		t.Fatalf("long gap = %q, want empty", got)
 	}
-	// Switching keys fires at once.
-	if got := repStep(&st, 66, 1); got != 66 {
-		t.Fatalf("switch = %d, want 66", got)
+	if got := charStep(&st, "a", 1000); got != "a" {
+		t.Fatalf("re-press = %q, want a", got)
+	}
+	// Different text always fires at once.
+	if got := charStep(&st, "b", 1001); got != "b" {
+		t.Fatalf("switch = %q, want b", got)
 	}
 }
 
@@ -175,33 +178,6 @@ func TestKeyCharsHeadless(t *testing.T) {
 	b.mu.Lock()
 	b.line = nil
 	b.mu.Unlock()
-}
-
-func TestShiftCode(t *testing.T) {
-	if got := shiftCode(65, false); got != 97 {
-		t.Fatalf("A no-shift = %d, want 97", got)
-	}
-	if got := shiftCode(90, false); got != 122 {
-		t.Fatalf("Z no-shift = %d, want 122", got)
-	}
-	if got := shiftCode(65, true); got != 65 {
-		t.Fatalf("A shift = %d, want 65", got)
-	}
-	if got := shiftCode(49, true); got != 33 {
-		t.Fatalf("1 shift = %d, want 33 '!'", got)
-	}
-	if got := shiftCode(48, true); got != 41 {
-		t.Fatalf("0 shift = %d, want 41 ')'", got)
-	}
-	if got := shiftCode(50, true); got != 64 {
-		t.Fatalf("2 shift = %d, want 64 '@'", got)
-	}
-	if got := shiftCode(48, false); got != 48 {
-		t.Fatalf("0 no-shift = %d, want 48", got)
-	}
-	if got := shiftCode(13, true); got != 13 {
-		t.Fatalf("enter shift = %d, want 13", got)
-	}
 }
 
 func TestKeyForExtended(t *testing.T) {
@@ -327,24 +303,15 @@ func TestIMEStateHeadless(t *testing.T) {
 	}
 }
 
-// TestKeyRepeatIdleHeadless: with no loop running nothing is pressed,
-// so keyrep reports 0 and leaves no armed key.
-func TestKeyRepeatIdleHeadless(t *testing.T) {
+// TestKeyCharsIdleHeadless: with no loop running nothing is typed,
+// so keychar reports "" and arms no session.
+func TestKeyCharsIdleHeadless(t *testing.T) {
 	b := mustNew(t)
-	if got := b.KeyRepeat(); got != 0 {
-		t.Fatalf("KeyRepeat = %d, want 0", got)
+	if got := b.KeyChars(); got != "" {
+		t.Fatalf("KeyChars = %q, want empty", got)
 	}
-	if b.repCode != 0 {
-		t.Fatalf("repCode = %d, want 0", b.repCode)
-	}
-	// The scan set must match getkey's numbering exactly.
-	if len(repCodes) != 18+10+26+12+11 {
-		t.Fatalf("len(repCodes) = %d, want 77", len(repCodes))
-	}
-	for _, c := range repCodes {
-		if _, ok := keyFor(c); !ok {
-			t.Fatalf("repCodes holds unknown getkey code %d", c)
-		}
+	if b.charSt.live {
+		t.Fatal("charSt should be idle")
 	}
 }
 

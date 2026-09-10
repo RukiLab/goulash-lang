@@ -8,7 +8,7 @@ var guiBuiltinNames = []string{
 	"pset", "line", "boxf", "circle",
 	"gcopy", "gmode", "picload",
 	"pngsave", "gzoom", "grotate", "galpha", "paint", "font",
-	"getkey", "keyrep", "keychar", "stick", "mousex", "mousey", "clicked", "mousewheel", "fullscreen", "closing", "screensize", "cursor",
+	"getkey", "keychar", "stick", "mousex", "mousey", "clicked", "mousewheel", "fullscreen", "closing", "screensize", "cursor",
 	"padcount", "padbtn", "padaxis", "padname",
 	"touchcount", "touchx", "touchy", "winmove", "dropfiles", "dropload",
 	"mmload", "mmplay", "mmstop", "mmvol",

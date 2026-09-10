@@ -5,7 +5,7 @@ Goulash 処理系の変更履歴です。v0.1 は未リリースのため、す�
 ## [Unreleased]
 
 ### 追加
-- `keyrep()`（GUI）：キーリピート付きキー取得。英字は通常小文字、shift 押下中は大文字、数字 + shift は US 配列記号を返す
+- `keychar()`（GUI）：OS の確定文字入力（配列・shift・caps 対応）にキーリピート付き。新規は即時、保持は 24 tick 後・以降 4 tick ごと
 - `ime()` / `imeget()`（GUI）：IME 変換入力と変換中文字列の取得
 - `dim(n1, n2, ...)`：多次元配列の確保（`null` 埋め）
 - map のドット記法（`m.name` ≡ `m["name"]`、読み書き・複合代入可）
@@ -20,7 +20,6 @@ Goulash 処理系の変更履歴です。v0.1 は未リリースのため、す�
 - VS Code 拡張の雛形（`editors/vscode/`：`.gsh` の強調表示・編集支援）
 - `setstr(id, s)`（GUI）：`mesbox` 内容の置換（`mesbox` は表示専用のため）
 - `examples/human_check.gsh`：人手検証テスト（描画・入力・IME・音声・キーの確認手順）
-- `keychar()`（GUI）：OS の確定文字入力（配列・shift・caps 対応）。物理キーの `keyrep()` に対する文字入力用 API
 
 ### 変更（破壊的）
 - コマンド名：`hsp-next` → `gou` → `gsh`。モジュールも `gsh`（`gsh/gui`）に統一。言語名 `Goulash` は維持
@@ -42,10 +41,9 @@ Goulash 処理系の変更履歴です。v0.1 は未リリースのため、す�
 - `dialog` のはみ出しを修正（文を自動折り返し、窓サイズを内容に合わせる）
 - `mesbox` を表示専用として明確化（キーボード編集不可。`setstr` / `getstr` で操作）
 - ラベルなし画像ボタンの表示ずれを修正（空テキスト行による数ピクセルのオフセットを解消。画像単独時は状態フェイスで全面表示）
-- `keyrep()` の再押下を取りこぼす不具合を修正（押下時間の逆行を新押下として即時発火）
-- `keyrep()` で修飾キーが英字を隠す不具合を修正（Shift/Ctrl/Alt は単独押下時のみ発火。Shift+A は `65`）
 
 ### 削除
+- `keyrep()`（完全削除。文字入力とリピートは `keychar()` に一本化。物理キーは `getkey()` を使用）
 - `redraw`（完全削除。使用時は未定義エラー）
 - `struct` 関連の構文・値・組み込み・テスト・文書
 - 同梱フォント `gui/mplus-1p-regular.ttf` と `gui/font-license.md`
