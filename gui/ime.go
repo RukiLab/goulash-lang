@@ -73,15 +73,67 @@ func (b *WindowBackend) pumpIME() {
 		}
 	}
 	b.mu.Lock()
-	if len(full) > b.imeSeen {
-		b.imePending += full[b.imeSeen:]
-		b.imeSeen = len(full)
+	// Mirror the field into the pending stream: typed text appends,
+	// in-field deletions (backspace etc.) truncate the stream tail.
+	// The tail covers the undrained pending first, then the line
+	// buffer or the focused editor, because a consumer drains every
+	// tick and already holds older text.
+	if drop, add := imeDiff(b.imePrev, full); drop > 0 || add != "" {
+		if drop > 0 {
+			b.dropLastLocked(drop)
+		}
+		b.imePending += add
 	}
+	b.imePrev = full
 	b.imeComposing = comp
-	// Bound field memory once everything is drained and idle.
-	if ulen == 0 && b.imePending == "" && b.imeSeen > 0 {
+	// Drained and idle: reset the field so the next tick starts from
+	// a clean, append-only slate (invisible-field caret drifts cannot
+	// accumulate across ticks).
+	if ulen == 0 && b.imePending == "" && b.imePrev != "" {
 		b.imeField.SetTextAndSelection("", 0, 0)
-		b.imeSeen = 0
+		b.imePrev = ""
 	}
 	b.mu.Unlock()
+}
+
+// imeDiff splits new committed field text against the previous tick:
+// drop is the rune count to remove from the consumer tail (in-field
+// deletions), add is the newly typed text. Pure logic, unit-testable.
+func imeDiff(prev, full string) (drop int, add string) {
+	or, nr := []rune(prev), []rune(full)
+	i := 0
+	for i < len(or) && i < len(nr) && or[i] == nr[i] {
+		i++
+	}
+	return len(or) - i, string(nr[i:])
+}
+
+// dropLastLocked removes n runes from the end of the IME consumer
+// stream: undrained pending first, then the line buffer or the
+// focused editor. Caller holds mu (game thread, from pumpIME).
+func (b *WindowBackend) dropLastLocked(n int) {
+	for n > 0 && b.imePending != "" {
+		pr := []rune(b.imePending)
+		b.imePending = string(pr[:len(pr)-1])
+		n--
+	}
+	if n == 0 {
+		return
+	}
+	if b.line != nil {
+		for n > 0 && len(b.line.buf) > 0 {
+			b.line.buf = b.line.buf[:len(b.line.buf)-1]
+			n--
+		}
+		return
+	}
+	if ed := b.focusedLocked(); ed != nil {
+		for n > 0 && len(ed.text) > 0 {
+			ed.text = ed.text[:len(ed.text)-1]
+			if ed.caret > len(ed.text) {
+				ed.caret = len(ed.text)
+			}
+			n--
+		}
+	}
 }

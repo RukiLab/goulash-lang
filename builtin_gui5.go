@@ -43,47 +43,7 @@ func init() {
 		return Null(), nil
 	})
 
-	// toggle(id, label, x, y, w, h [, onImg [, offImg]]): place a
-	// toggle switch. Non-positive w/h auto-size from the font.
-	// Images are picload/dropload buffer ids for the on/off states
-	// (off falls back to a darkened on); both missing draws a pill
-	// switch. checked(id) reads the state (1 = on).
-	register("toggle", 6, 8, func(in *Interp, args []Value, at Pos) (Value, error) {
-		wb, err := guiBE(in, at, "toggle")
-		if err != nil {
-			return Null(), err
-		}
-		id, err := needInt("toggle", args, 0, at)
-		if err != nil {
-			return Null(), err
-		}
-		label, err := needString("toggle", args, 1, at)
-		if err != nil {
-			return Null(), err
-		}
-		rect := make([]int, 4)
-		for i := range rect {
-			v, err := needInt("toggle", args, i+2, at)
-			if err != nil {
-				return Null(), err
-			}
-			rect[i] = int(v)
-		}
-		var imgs []int
-		for i := 6; i < len(args); i++ {
-			v, err := needInt("toggle", args, i, at)
-			if err != nil {
-				return Null(), err
-			}
-			imgs = append(imgs, int(v))
-		}
-		if err := wb.AddToggle(int(id), label, rect[0], rect[1], rect[2], rect[3], imgs...); err != nil {
-			return Null(), rtErrf(at, "%s", err.Error())
-		}
-		return Null(), nil
-	})
-
-	// checked(id): checkbox/toggle state.
+	// checked(id): checkbox state.
 	register("checked", 1, 1, func(in *Interp, args []Value, at Pos) (Value, error) {
 		wb, err := guiBE(in, at, "checked")
 		if err != nil {

@@ -8,6 +8,8 @@
   "engines": {
     "vscode": "^1.80.0"
   },
+  "main": "./extension.js",
+  "activationEvents": ["onLanguage:goulash"],
   "categories": ["Programming Languages"],
   "contributes": {
     "languages": [
@@ -25,22 +27,28 @@
         "path": "./syntaxes/goulash.tmLanguage.json"
       }
     ],
-    "keybindings": [
+    "commands": [
       {
-        "command": "workbench.action.terminal.sendSequence",
-        "key": "F5",
-        "when": "editorLangId == goulash",
-        "args": {
-          "text": "gsh run \"${file}\"\u000D"
-        }
+        "command": "goulash.run",
+        "title": "Goulash: 実行",
+        "category": "Goulash"
       },
       {
-        "command": "workbench.action.terminal.sendSequence",
+        "command": "goulash.runGui",
+        "title": "Goulash: 実行 (GUI)",
+        "category": "Goulash"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "goulash.run",
+        "key": "F5",
+        "when": "editorLangId == goulash && editorTextFocus"
+      },
+      {
+        "command": "goulash.runGui",
         "key": "ctrl+F5",
-        "when": "editorLangId == goulash",
-        "args": {
-          "text": "gsh run \"${file}\" --gui\u000D"
-        }
+        "when": "editorLangId == goulash && editorTextFocus"
       }
     ]
   }

@@ -239,10 +239,11 @@ func TestHttpget(t *testing.T) {
 }
 
 func TestExec(t *testing.T) {
+	// Async launch: returns 0 once started, without waiting.
 	if runtime.GOOS == "windows" {
-		mustOutIO(t, "mes(exec(\"cmd\", \"/c\", \"exit\", \"3\"))\n", "", "3\n")
+		mustOutIO(t, "mes(exec(\"cmd\", \"/c\", \"exit\", \"3\"))\n", "", "0\n")
 	} else {
-		mustOutIO(t, "mes(exec(\"sh\", \"-c\", \"exit 3\"))\n", "", "3\n")
+		mustOutIO(t, "mes(exec(\"sh\", \"-c\", \"exit 3\"))\n", "", "0\n")
 	}
 	mustErrIO(t, "mes(exec(\"no-such-command-xyz\"))\n", "exec：")
 }

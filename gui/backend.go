@@ -93,10 +93,11 @@ type WindowBackend struct {
 	ctrlSt []ctrlState // one slot per ctrlKeys entry
 	// IME state (ime/imeget; Field is pumped on the game thread only,
 	// mirrors are guarded by mu for script-side reads).
-	imeField     textinput.Field
-	imeSeen      int    // committed bytes consumed from the field
-	imePending   string // committed text awaiting the line editor
-	imeComposing string // uncommitted (conversion) text mirror
+	imeField   textinput.Field
+	imePrev    string // previous tick's committed field text (diff base)
+	imePending string // committed text awaiting the line editor
+	// imeComposing is the uncommitted (conversion) text mirror.
+	imeComposing string
 	// Retained widgets (G3, game thread only except where noted).
 	ui        *ebitenui.UI
 	root      *widget.Container
@@ -214,7 +215,6 @@ func (b *WindowBackend) Update() error {
 	b.pumpInput()
 	b.pumpDrops()
 	b.pumpIME()
-	b.pumpToggles()
 	b.pumpInputs()
 	if b.ui != nil {
 		b.ui.Update()
@@ -230,30 +230,40 @@ func (b *WindowBackend) Update() error {
 	// (same tick); only feed the line editor here so keystrokes are
 	// never processed twice.
 	if b.line != nil {
-		// While the IME field is focused, committed text arrives via
-		// pumpIME (textinput owns the key stream); otherwise use the
-		// plain committed characters.
-		if b.imeField.IsFocused() {
+		// While the IME field is focused it owns the whole key
+		// stream (chars and editing keys); pumpIME mirrors it, so
+		// the line must not edit itself or keystrokes apply twice.
+		imeOn := b.imeField.IsFocused()
+		if imeOn {
 			if b.imePending != "" {
 				b.line.buf = append(b.line.buf, []rune(b.imePending)...)
 				b.imePending = ""
 			}
 		} else {
 			b.line.buf = append(b.line.buf, ebiten.AppendInputChars(nil)...)
+			if inpututil.IsKeyJustPressed(ebiten.KeyBackspace) && len(b.line.buf) > 0 {
+				b.line.buf = b.line.buf[:len(b.line.buf)-1]
+			}
+			if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+				b.line.buf = b.line.buf[:0]
+			}
 		}
-		if inpututil.IsKeyJustPressed(ebiten.KeyEnter) || inpututil.IsKeyJustPressed(ebiten.KeyKPEnter) {
+		// Enter confirms the line, but mid-conversion it commits the
+		// composition instead (a second Enter confirms).
+		if (!imeOn || b.imeComposing == "") &&
+			(inpututil.IsKeyJustPressed(ebiten.KeyEnter) || inpututil.IsKeyJustPressed(ebiten.KeyKPEnter)) {
 			req := b.line
 			b.line = nil
 			// Advance past the editor line so later output continues below.
 			b.curX = 0
 			b.curY++
+			// Drop any field residue (e.g. an Enter newline the
+			// field kept): the entry is finished, and leftovers
+			// would leak into the next input().
+			b.imePending = ""
+			b.imePrev = ""
+			b.imeField.SetTextAndSelection("", 0, 0)
 			req.done <- string(req.buf)
-		}
-		if inpututil.IsKeyJustPressed(ebiten.KeyBackspace) && len(b.line.buf) > 0 {
-			b.line.buf = b.line.buf[:len(b.line.buf)-1]
-		}
-		if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
-			b.line.buf = b.line.buf[:0]
 		}
 	}
 	return nil
@@ -285,9 +295,10 @@ func (b *WindowBackend) Draw(screen *ebiten.Image) {
 	charW, lineH := b.charW, b.lineH
 	ascent := face.Metrics().HAscent
 	// Caret x in pixels (measured: proportional fonts drift from cells).
+	// In-conversion text counts: the caret rides past it while typing.
 	caretX := 0.0
 	if editor != nil {
-		if w, _ := text.Measure(editor.prompt+edBuf, face, 0); w > 0 {
+		if w, _ := text.Measure(editor.prompt+edBuf+comp, face, 0); w > 0 {
 			caretX = w
 		}
 	}
@@ -347,7 +358,6 @@ func (b *WindowBackend) Draw(screen *ebiten.Image) {
 		}
 		b.ui.Draw(screen)
 	}
-	b.drawToggles(screen)
 	b.drawInputs(screen)
 }
 

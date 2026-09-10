@@ -202,60 +202,61 @@ func TestCtrlStep(t *testing.T) {
 	}
 }
 
-// TestToggleFlip checks switch hit-testing without a game loop.
-func TestToggleFlip(t *testing.T) {
-	r := image.Rect(10, 20, 50, 44)
-	if toggleFlip(false, r, 10, 20, true, false) != true {
-		t.Fatal("click inside should turn on")
+// TestImeDiff checks the field mirror: appends pass through,
+// in-field deletions become tail drops, identical text is a no-op.
+func TestImeDiff(t *testing.T) {
+	if d, a := imeDiff("", "あ"); d != 0 || a != "あ" {
+		t.Fatalf("type = (%d,%q)", d, a)
 	}
-	if toggleFlip(true, r, 49, 43, true, false) != false {
-		t.Fatal("click inside should turn off")
+	if d, a := imeDiff("あ", "あい"); d != 0 || a != "い" {
+		t.Fatalf("append = (%d,%q)", d, a)
 	}
-	if toggleFlip(false, r, 9, 20, true, false) != false {
-		t.Fatal("click outside should keep state")
+	if d, a := imeDiff("あい", "あ"); d != 1 || a != "" {
+		t.Fatalf("backspace = (%d,%q)", d, a)
 	}
-	if toggleFlip(false, r, 10, 20, false, false) != false {
-		t.Fatal("no click should keep state")
+	if d, a := imeDiff("あいう", "あ"); d != 2 || a != "" {
+		t.Fatalf("multi-drop = (%d,%q)", d, a)
 	}
-	if toggleFlip(false, r, 10, 20, true, true) != false {
-		t.Fatal("disabled should keep state")
+	if d, a := imeDiff("あい", "あう"); d != 1 || a != "う" {
+		t.Fatalf("replace = (%d,%q)", d, a)
 	}
-}
-
-// TestAddToggleValidation covers argument checks without a game loop
-// (all paths return before runOnLoop).
-func TestAddToggleValidation(t *testing.T) {
-	b := mustNew(t)
-	if err := b.AddToggle(1, "x", 0, 0, 48, 24, 1, 2, 3); err == nil {
-		t.Fatal("3 images should error")
+	if d, a := imeDiff("あ", "あ"); d != 0 || a != "" {
+		t.Fatalf("idle = (%d,%q)", d, a)
 	}
-	if err := b.AddToggle(1, "x", 0, 0, 48, 24, 99); err == nil {
-		t.Fatal("unknown buffer should error")
+	// Post-delete commits are not swallowed (the stale-mark bug).
+	if d, a := imeDiff("あ", "あい"); d != 0 || a != "い" {
+		t.Fatalf("retype = (%d,%q)", d, a)
 	}
 }
 
-// TestToggleCheckedMirror wires a toggle entry by hand and checks the
-// checked() mirror path (flip + cache sync).
-func TestToggleCheckedMirror(t *testing.T) {
+// TestDropLastLocked checks tail truncation across the consumer
+// chain: pending first, then the line buffer, then the editor.
+func TestDropLastLocked(t *testing.T) {
 	b := mustNew(t)
 	b.mu.Lock()
+	b.imePending = "abcde"
+	b.dropLastLocked(2)
+	if b.imePending != "abc" {
+		t.Fatalf("pending = %q, want abc", b.imePending)
+	}
+	b.imePending = "ab"
+	b.line = &lineReq{prompt: "> ", buf: []rune("XY"), done: make(chan string, 1)}
+	b.dropLastLocked(3)
+	if b.imePending != "" || string(b.line.buf) != "X" {
+		t.Fatalf("line = %q/%q", b.imePending, string(b.line.buf))
+	}
+	b.line = nil
 	if b.widgets == nil {
 		b.widgets = map[int]*widgetEntry{}
 	}
-	b.widgets[7] = &widgetEntry{id: 7, kind: wToggle, selIdx: -1,
-		toggle: &toggleState{rect: image.Rect(0, 0, 48, 24)}}
-	b.mu.Unlock()
-	if got, err := b.Checked(7); err != nil || got {
-		t.Fatalf("Checked = %v, %v; want false, nil", got, err)
+	b.widgets[3] = &widgetEntry{id: 3, kind: wInput, selIdx: -1,
+		edit: &inputState{text: []rune("hello"), caret: 5, focused: true}}
+	b.dropLastLocked(2)
+	e := b.widgets[3].edit
+	if string(e.text) != "hel" || e.caret != 3 {
+		t.Fatalf("edit = %q/%d", string(e.text), e.caret)
 	}
-	b.mu.Lock()
-	e := b.widgets[7]
-	e.toggle.on = toggleFlip(e.toggle.on, e.toggle.rect, 5, 5, true, e.disabled)
 	b.mu.Unlock()
-	b.syncWidgetCache()
-	if got, err := b.Checked(7); err != nil || !got {
-		t.Fatalf("Checked after flip = %v, %v; want true, nil", got, err)
-	}
 }
 
 func TestKeyCharsHeadless(t *testing.T) {

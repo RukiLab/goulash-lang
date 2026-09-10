@@ -221,6 +221,7 @@ func (b *WindowBackend) pumpInputs() {
 	// focused they arrive via pumpIME; otherwise plain.
 	b.mu.Lock()
 	imeOn := b.imeField.IsFocused()
+	comp := b.imeComposing
 	pending := b.imePending
 	b.imePending = ""
 	b.mu.Unlock()
@@ -229,15 +230,29 @@ func (b *WindowBackend) pumpInputs() {
 	} else {
 		ed.insert(ebiten.AppendInputChars(nil))
 	}
-	// Editing keys (game thread: inpututil is safe here).
-	if inpututil.IsKeyJustPressed(ebiten.KeyEnter) || inpututil.IsKeyJustPressed(ebiten.KeyKPEnter) ||
-		inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
-		b.mu.Lock()
-		b.blurEditsLocked()
-		b.mu.Unlock()
-		b.imeField.Blur()
+	// While converting, Enter/Escape belong to the IME (they commit
+	// or cancel the composition); otherwise they blur the box. While
+	// the field is focused it also owns the editing keys below, or
+	// keystrokes would apply twice (field and box).
+	if !imeOn || comp == "" {
+		if inpututil.IsKeyJustPressed(ebiten.KeyEnter) || inpututil.IsKeyJustPressed(ebiten.KeyKPEnter) ||
+			inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+			b.mu.Lock()
+			b.blurEditsLocked()
+			// Drop field residue like the line editor does on
+			// confirm: the entry is finished.
+			b.imePending = ""
+			b.imePrev = ""
+			b.mu.Unlock()
+			b.imeField.SetTextAndSelection("", 0, 0)
+			b.imeField.Blur()
+			return
+		}
+	}
+	if imeOn {
 		return
 	}
+	// Editing keys (game thread: inpututil is safe here).
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, k := range []ebiten.Key{
@@ -310,6 +325,10 @@ func drawInput(screen *ebiten.Image, st *inputState, disabled bool, face *text.G
 		return
 	}
 	caretX := measureInput(face, st.text[:st.caret])
+	if st.focused {
+		// The caret rides past the in-conversion text while typing.
+		caretX += measureInput(face, []rune(comp))
+	}
 	visX := caretX - float64(st.scroll)
 	// Keep the caret visible.
 	if visX > float64(inner.Dx()) {

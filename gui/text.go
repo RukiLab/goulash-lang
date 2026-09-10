@@ -252,14 +252,16 @@ func (b *WindowBackend) caretPixels() (x, y float64, ok bool) {
 		return 0, 0, false
 	}
 	if ed := b.focusedLocked(); ed != nil {
-		w, _ := text.Measure(string(ed.text[:ed.caret]), b.face, 0)
+		// The caret rides past the in-conversion text so it (and the
+		// candidate window anchored here) tracks what is typed.
+		w, _ := text.Measure(string(ed.text[:ed.caret])+b.imeComposing, b.face, 0)
 		return float64(ed.rect.Min.X) + 4 + w - float64(ed.scroll),
 			float64(ed.rect.Min.Y), true
 	}
 	if b.line == nil {
 		return 0, 0, false
 	}
-	w, _ := text.Measure(b.line.prompt+string(b.line.buf), b.face, 0)
+	w, _ := text.Measure(b.line.prompt+string(b.line.buf)+b.imeComposing, b.face, 0)
 	return w, float64(b.curY) * b.lineH, true
 }
 

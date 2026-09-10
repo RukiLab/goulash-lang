@@ -150,8 +150,11 @@ func init() {
 		return ArrayOf(elems), nil
 	})
 
-	// exec(name, args...): run an external command, return its exit code.
+	// exec(name, args...): launch an external command asynchronously,
+	// return 0 once started (it keeps running after exec returns).
 	// Stdout/stderr pass through. Failure to start is an error.
+	// pipeexec() is the synchronous twin: it waits for completion
+	// and captures stdout.
 	register("exec", 1, -1, func(in *Interp, args []Value, at Pos) (Value, error) {
 		name, err := needString("exec", args, 0, at)
 		if err != nil {
@@ -169,12 +172,11 @@ func init() {
 		cmd.Stdin = in.in
 		cmd.Stdout = in.be.Out()
 		cmd.Stderr = in.errOut
-		if err := cmd.Run(); err != nil {
-			if exit, ok := err.(*exec.ExitError); ok {
-				return Int(int64(exit.ExitCode())), nil
-			}
+		if err := cmd.Start(); err != nil {
 			return Null(), rtErrf(at, "exec：%s", err.Error())
 		}
+		// Reap in the background; output already streams through.
+		go func() { _ = cmd.Wait() }()
 		return Int(0), nil
 	})
 
