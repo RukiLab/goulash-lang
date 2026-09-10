@@ -6,9 +6,9 @@
 // runtime errors.
 //
 // GUI-only words live in builtin_gui*.go under the gui tag (G1-G5):
-// screen, width, gsel, pset, line, boxf, circle, gcopy, gmode,
-// picload, pngsave, gzoom, paint, font,
-// getkey, stick, mousex, mousey, clicked,
+// screen, gsel, pset, line, boxf, circle, gcopy, gmode,
+// picload, pngsave, paint, font,
+// getkey, mousex, mousey, clicked,
 // mmload, mmplay, mmstop, mmvol, button, pressed, inputbox, gettext,
 // listbox, selected, clrobj, dialog,
 // chkbox, checked, combox, mesbox, getstr, objprm.
@@ -33,7 +33,7 @@ type Backend interface {
 	Out() io.Writer
 	ReadLine(prompt string) (line string, ok bool)
 	Clear()
-	SetColor(r, g, b int)
+	SetColor(r, g, b, a int)
 	ResetColor()
 	SetTitle(s string)
 	MoveTo(x, y int)
@@ -86,7 +86,9 @@ func (b *ConsoleBackend) ReadLine(prompt string) (string, bool) {
 func (b *ConsoleBackend) Clear() { fmt.Fprint(b.out, "\x1b[2J\x1b[H") }
 
 // SetColor sets subsequent text color (0-255 per channel).
-func (b *ConsoleBackend) SetColor(r, g, b2 int) {
+// Terminals have no text alpha, so a is accepted and ignored.
+func (b *ConsoleBackend) SetColor(r, g, b2, a int) {
+	_ = a
 	fmt.Fprintf(b.out, "\x1b[38;2;%d;%d;%dm", clamp8(r), clamp8(g), clamp8(b2))
 }
 

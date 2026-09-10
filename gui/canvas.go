@@ -91,11 +91,12 @@ func (b *WindowBackend) currentSel() int {
 // CurrentSel exposes the selected target to script builtins.
 func (b *WindowBackend) CurrentSel() int { return b.currentSel() }
 
-// Foreground returns the current drawing color (script-thread safe).
-func (b *WindowBackend) Foreground() [3]int {
+// Foreground returns the current drawing color with alpha
+// (script-thread safe).
+func (b *WindowBackend) Foreground() [4]int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return [3]int{int(b.fg.R), int(b.fg.G), int(b.fg.B)}
+	return [4]int{int(b.fg.R), int(b.fg.G), int(b.fg.B), int(b.fg.A)}
 }
 
 // SetAlpha sets the global drawing alpha 0-255 (galpha).
@@ -116,11 +117,13 @@ func (b *WindowBackend) alphaScale() float32 {
 	return float32(b.alpha) / 255
 }
 
-// fillColor is the drawing color with the global alpha applied.
-func (b *WindowBackend) fillColor(fg [3]int) color.NRGBA {
+// fillColor is the drawing color with its own alpha multiplied by
+// the global alpha (galpha).
+func (b *WindowBackend) fillColor(fg [4]int) color.NRGBA {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return color.NRGBA{R: uint8(fg[0]), G: uint8(fg[1]), B: uint8(fg[2]), A: b.alpha}
+	a := uint16(fg[3]) * uint16(b.alpha) / 255
+	return color.NRGBA{R: uint8(fg[0]), G: uint8(fg[1]), B: uint8(fg[2]), A: uint8(a)}
 }
 
 // CanvasSize returns the logical canvas size (script-thread safe).
@@ -204,7 +207,7 @@ func (b *WindowBackend) currentBlend() ebiten.CompositeMode {
 }
 
 // SetPixel draws one pixel on the current target.
-func (b *WindowBackend) SetPixel(x, y int, fg [3]int) {
+func (b *WindowBackend) SetPixel(x, y int, fg [4]int) {
 	sel := b.currentSel()
 	c := b.fillColor(fg)
 	b.enqueue(func() {
@@ -213,7 +216,7 @@ func (b *WindowBackend) SetPixel(x, y int, fg [3]int) {
 }
 
 // FillRect draws a filled rectangle on the current target.
-func (b *WindowBackend) FillRect(x, y, w, h int, fg [3]int) {
+func (b *WindowBackend) FillRect(x, y, w, h int, fg [4]int) {
 	sel := b.currentSel()
 	c := b.fillColor(fg)
 	b.enqueue(func() {
@@ -222,7 +225,7 @@ func (b *WindowBackend) FillRect(x, y, w, h int, fg [3]int) {
 }
 
 // StrokeLine draws a 1px line on the current target.
-func (b *WindowBackend) StrokeLine(x1, y1, x2, y2 int, fg [3]int) {
+func (b *WindowBackend) StrokeLine(x1, y1, x2, y2 int, fg [4]int) {
 	sel := b.currentSel()
 	c := b.fillColor(fg)
 	b.enqueue(func() {
@@ -231,7 +234,7 @@ func (b *WindowBackend) StrokeLine(x1, y1, x2, y2 int, fg [3]int) {
 }
 
 // Circle draws a circle (filled when fill is true) on the current target.
-func (b *WindowBackend) Circle(x, y, r int, fill bool, fg [3]int) {
+func (b *WindowBackend) Circle(x, y, r int, fill bool, fg [4]int) {
 	sel := b.currentSel()
 	c := b.fillColor(fg)
 	b.enqueue(func() {
@@ -324,13 +327,13 @@ func (b *WindowBackend) allocUpload(src image.Image) (int, error) {
 // current target at (dx, dy). Script threads enqueue; Update applies.
 func (b *WindowBackend) BlitScaled(src, sx, sy, w, h int, zx, zy float64, dx, dy int) error {
 	if !b.hasBuf(src) {
-		return fmt.Errorf("gzoom：不明なバッファ %d です", src)
+		return fmt.Errorf("gcopy：不明なバッファ %d です", src)
 	}
 	if w <= 0 || h <= 0 {
-		return fmt.Errorf("gzoom のサイズは正の値である必要があります。%d x %d が指定されました", w, h)
+		return fmt.Errorf("gcopy のサイズは正の値である必要があります。%d x %d が指定されました", w, h)
 	}
 	if zx <= 0 || zy <= 0 {
-		return fmt.Errorf("gzoom のスケールは正の値である必要があります。%g x %g が指定されました", zx, zy)
+		return fmt.Errorf("gcopy のスケールは正の値である必要があります。%g x %g が指定されました", zx, zy)
 	}
 	dst := b.currentSel()
 	blend := b.currentBlend()
@@ -365,13 +368,13 @@ func rotateTransform(w, h int, zx, zy, deg, dx, dy float64) ebiten.GeoM {
 // Script threads enqueue; Update applies.
 func (b *WindowBackend) BlitRotate(src, sx, sy, w, h int, deg, zx, zy float64, dx, dy int) error {
 	if !b.hasBuf(src) {
-		return fmt.Errorf("grotate：不明なバッファ %d です", src)
+		return fmt.Errorf("gcopy：不明なバッファ %d です", src)
 	}
 	if w <= 0 || h <= 0 {
-		return fmt.Errorf("grotate のサイズは正の値である必要があります。%d x %d が指定されました", w, h)
+		return fmt.Errorf("gcopy のサイズは正の値である必要があります。%d x %d が指定されました", w, h)
 	}
 	if zx <= 0 || zy <= 0 {
-		return fmt.Errorf("grotate のスケールは正の値である必要があります。%g x %g が指定されました", zx, zy)
+		return fmt.Errorf("gcopy のスケールは正の値である必要があります。%g x %g が指定されました", zx, zy)
 	}
 	dst := b.currentSel()
 	blend := b.currentBlend()
@@ -392,7 +395,7 @@ func (b *WindowBackend) BlitRotate(src, sx, sy, w, h int, deg, zx, zy float64, d
 // already in fg is a no-op. Script threads enqueue; Update applies.
 // Pixel access is batched (one readback, one writeback): per-pixel At/Set
 // would round-trip the GPU on every call.
-func (b *WindowBackend) FloodFill(x, y int, fg [3]int) error {
+func (b *WindowBackend) FloodFill(x, y int, fg [4]int) error {
 	b.mu.Lock()
 	w, h := b.w, b.h
 	b.mu.Unlock()

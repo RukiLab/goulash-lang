@@ -162,6 +162,102 @@ func TestCharStep(t *testing.T) {
 	}
 }
 
+// TestCtrlStep checks control-key repeat without a game loop:
+// fire on press, quiet during the delay, refire on the interval,
+// release resets to fire-at-once.
+func TestCtrlStep(t *testing.T) {
+	var st ctrlState
+	if ctrlStep(&st, false, 0) {
+		t.Fatal("idle should not fire")
+	}
+	if !ctrlStep(&st, true, 0) {
+		t.Fatal("press should fire")
+	}
+	if ctrlStep(&st, true, 10) {
+		t.Fatal("hold below delay should not fire")
+	}
+	if !ctrlStep(&st, true, repDelay) {
+		t.Fatal("delay should refire")
+	}
+	if !ctrlStep(&st, true, repDelay+repInterval) {
+		t.Fatal("interval should refire")
+	}
+	if ctrlStep(&st, true, repDelay+repInterval+1) {
+		t.Fatal("off-beat hold should not fire")
+	}
+	if ctrlStep(&st, false, repDelay+repInterval+2) {
+		t.Fatal("release should not fire")
+	}
+	if !ctrlStep(&st, true, 1000) {
+		t.Fatal("re-press should fire at once")
+	}
+	if len(ctrlKeys) != 6 {
+		t.Fatalf("ctrlKeys = %d entries, want 6", len(ctrlKeys))
+	}
+	want := map[string]bool{"\x08": true, "\x09": true, "\r": true, "\x1b": true, "\x7f": true}
+	for _, ck := range ctrlKeys {
+		if !want[ck.ch] {
+			t.Fatalf("unexpected control char %q", ck.ch)
+		}
+	}
+}
+
+// TestToggleFlip checks switch hit-testing without a game loop.
+func TestToggleFlip(t *testing.T) {
+	r := image.Rect(10, 20, 50, 44)
+	if toggleFlip(false, r, 10, 20, true, false) != true {
+		t.Fatal("click inside should turn on")
+	}
+	if toggleFlip(true, r, 49, 43, true, false) != false {
+		t.Fatal("click inside should turn off")
+	}
+	if toggleFlip(false, r, 9, 20, true, false) != false {
+		t.Fatal("click outside should keep state")
+	}
+	if toggleFlip(false, r, 10, 20, false, false) != false {
+		t.Fatal("no click should keep state")
+	}
+	if toggleFlip(false, r, 10, 20, true, true) != false {
+		t.Fatal("disabled should keep state")
+	}
+}
+
+// TestAddToggleValidation covers argument checks without a game loop
+// (all paths return before runOnLoop).
+func TestAddToggleValidation(t *testing.T) {
+	b := mustNew(t)
+	if err := b.AddToggle(1, "x", 0, 0, 48, 24, 1, 2, 3); err == nil {
+		t.Fatal("3 images should error")
+	}
+	if err := b.AddToggle(1, "x", 0, 0, 48, 24, 99); err == nil {
+		t.Fatal("unknown buffer should error")
+	}
+}
+
+// TestToggleCheckedMirror wires a toggle entry by hand and checks the
+// checked() mirror path (flip + cache sync).
+func TestToggleCheckedMirror(t *testing.T) {
+	b := mustNew(t)
+	b.mu.Lock()
+	if b.widgets == nil {
+		b.widgets = map[int]*widgetEntry{}
+	}
+	b.widgets[7] = &widgetEntry{id: 7, kind: wToggle, selIdx: -1,
+		toggle: &toggleState{rect: image.Rect(0, 0, 48, 24)}}
+	b.mu.Unlock()
+	if got, err := b.Checked(7); err != nil || got {
+		t.Fatalf("Checked = %v, %v; want false, nil", got, err)
+	}
+	b.mu.Lock()
+	e := b.widgets[7]
+	e.toggle.on = toggleFlip(e.toggle.on, e.toggle.rect, 5, 5, true, e.disabled)
+	b.mu.Unlock()
+	b.syncWidgetCache()
+	if got, err := b.Checked(7); err != nil || !got {
+		t.Fatalf("Checked after flip = %v, %v; want true, nil", got, err)
+	}
+}
+
 func TestKeyCharsHeadless(t *testing.T) {
 	b := mustNew(t)
 	// Headless: no loop, nothing typed.
@@ -461,7 +557,7 @@ type renderGame struct {
 	fillLit, textLit, backLit      int
 	rectLit, circleLit, anyLit     int
 	minX, minY, maxX, maxY         int
-	stickVal, mouseX, mouseY       int
+	keyIdle, mouseX, mouseY        int
 	clickedVal                     bool
 	probedInput                    bool
 	filled, texted, backed, shaped bool
@@ -520,8 +616,8 @@ func (g *renderGame) Draw(screen *ebiten.Image) {
 		// Enqueue like a script would, then drain synchronously:
 		// ebiten does not guarantee 1:1 Update/Draw pairing, so a test
 		// must not depend on the next Update having run.
-		g.b.FillRect(300, 100, 40, 30, [3]int{255, 0, 0})
-		g.b.Circle(100, 300, 20, true, [3]int{0, 255, 0})
+		g.b.FillRect(300, 100, 40, 30, [4]int{255, 0, 0, 255})
+		g.b.Circle(100, 300, 20, true, [4]int{0, 255, 0, 255})
 		g.b.drainQueue()
 		g.b.Draw(screen)
 	case g.frames >= 8:
@@ -555,7 +651,13 @@ func (g *renderGame) Draw(screen *ebiten.Image) {
 		}
 		g.shaped = true
 		// In-loop input queries (unsafe outside the loop).
-		g.stickVal = g.b.Stick()
+		// Idle arrows stand in for the removed stick() probe.
+		if left, ok := g.b.KeyDown(37); ok && left {
+			g.keyIdle = 1
+		}
+		if up, ok := g.b.KeyDown(38); ok && up {
+			g.keyIdle = 1
+		}
 		g.mouseX, g.mouseY = g.b.MousePos()
 		g.clickedVal = g.b.Clicked()
 		g.probedInput = true
@@ -738,7 +840,7 @@ func (g *renderGame) checkSaved() {
 func (g *renderGame) checkZoom(screen *ebiten.Image) {
 	b := g.b
 	b.SelectTarget(1)
-	b.FillRect(0, 0, 20, 20, [3]int{255, 0, 0})
+	b.FillRect(0, 0, 20, 20, [4]int{255, 0, 0, 255})
 	b.drainQueue()
 	b.SelectTarget(0)
 	if err := b.BlitScaled(1, 0, 0, 20, 20, 2, 2, 460, 200); err != nil {
@@ -760,9 +862,9 @@ func (g *renderGame) checkZoom(screen *ebiten.Image) {
 // (game thread). The square avoids widget rects (ui draws over canvas).
 func (g *renderGame) checkPaint(screen *ebiten.Image) {
 	b := g.b
-	b.FillRect(460, 360, 40, 40, [3]int{255, 255, 255})
+	b.FillRect(460, 360, 40, 40, [4]int{255, 255, 255, 255})
 	b.drainQueue()
-	if err := b.FloodFill(480, 380, [3]int{255, 0, 0}); err != nil {
+	if err := b.FloodFill(480, 380, [4]int{255, 0, 0, 255}); err != nil {
 		g.wFail = "paint: " + err.Error()
 		return
 	}
@@ -951,7 +1053,8 @@ func TestInputTextNoStall(t *testing.T) {
 	}
 }
 
-// TestInputTextJapaneseRefresh: widget edits surface through the mirror.
+// TestInputTextJapaneseRefresh: game-thread edits surface immediately
+// (the custom editor state is the source of truth; no mirror needed).
 func TestInputTextJapaneseRefresh(t *testing.T) {
 	b := mustNew(t)
 	done := make(chan struct{})
@@ -966,14 +1069,14 @@ func TestInputTextJapaneseRefresh(t *testing.T) {
 	b.enqueue(func() {
 		b.mu.Lock()
 		e := b.widgets[12]
+		e.edit.text = []rune("日本語テスト")
+		e.edit.caret = len(e.edit.text)
 		b.mu.Unlock()
-		e.input.SetText("日本語テスト")
 		close(set)
 	})
 	if !pumpUntil(b, set, 10*time.Second) {
-		t.Fatal("SetText never applied")
+		t.Fatal("edit never applied")
 	}
-	b.syncWidgetCache() // what Update does every tick
 	s, err := b.InputText(12)
 	if err != nil {
 		t.Fatalf("InputText: %v", err)
@@ -983,6 +1086,96 @@ func TestInputTextJapaneseRefresh(t *testing.T) {
 	}
 	if _, err := b.InputText(99); err == nil {
 		t.Fatal("InputText on unknown id should error")
+	}
+}
+
+// TestInputEditOps checks caret editing ops without a game loop.
+func TestInputEditOps(t *testing.T) {
+	e := &inputState{text: []rune("abc"), caret: 3}
+	e.insert([]rune("で"))
+	if string(e.text) != "abcで" || e.caret != 4 {
+		t.Fatalf("insert = %q/%d", string(e.text), e.caret)
+	}
+	e.moveLeft()
+	e.moveLeft()
+	e.backspace()
+	if string(e.text) != "acで" || e.caret != 1 {
+		t.Fatalf("backspace = %q/%d", string(e.text), e.caret)
+	}
+	e.del()
+	if string(e.text) != "aで" || e.caret != 1 {
+		t.Fatalf("del = %q/%d", string(e.text), e.caret)
+	}
+	e.moveRight()
+	e.moveRight()
+	e.moveRight() // clamps at the end
+	if e.caret != 2 {
+		t.Fatalf("caret = %d, want 2", e.caret)
+	}
+	e.backspace()
+	e.backspace()
+	e.backspace() // clamps at the start
+	if string(e.text) != "" || e.caret != 0 {
+		t.Fatalf("clear = %q/%d", string(e.text), e.caret)
+	}
+}
+
+// TestInputRepFire checks held-key repeat gating without a game loop.
+func TestInputRepFire(t *testing.T) {
+	e := &inputState{}
+	if e.repFire(ebiten.KeyBackspace, false, false, 0) {
+		t.Fatal("released should not fire")
+	}
+	if !e.repFire(ebiten.KeyBackspace, true, true, 0) {
+		t.Fatal("just-pressed should fire")
+	}
+	if e.repFire(ebiten.KeyBackspace, false, true, 10) {
+		t.Fatal("hold below delay should not fire")
+	}
+	if !e.repFire(ebiten.KeyBackspace, false, true, repDelay) {
+		t.Fatal("delay should refire")
+	}
+	if !e.repFire(ebiten.KeyBackspace, false, true, repDelay+repInterval) {
+		t.Fatal("interval should refire")
+	}
+	if e.repFire(ebiten.KeyBackspace, false, false, repDelay+repInterval+1) {
+		t.Fatal("release should not fire")
+	}
+	if !e.repFire(ebiten.KeyBackspace, true, true, 1000) {
+		t.Fatal("re-press should fire at once")
+	}
+}
+
+// TestInputFocusModel checks click focus/blur without a game loop.
+func TestInputFocusModel(t *testing.T) {
+	b := mustNew(t)
+	done := make(chan struct{})
+	go func() {
+		_ = b.AddInput(1, 0, 0, 100, 30, "a")
+		close(done)
+	}()
+	if !pumpUntil(b, done, 10*time.Second) {
+		t.Fatal("AddInput never completed")
+	}
+	b.mu.Lock()
+	e := b.widgets[1]
+	if e == nil || e.edit == nil {
+		b.mu.Unlock()
+		t.Fatal("entry missing")
+	}
+	e.edit.focused = true
+	if got := b.focusedLocked(); got != e.edit {
+		b.mu.Unlock()
+		t.Fatal("focusedLocked should find the editor")
+	}
+	b.blurEditsLocked()
+	if b.focusedLocked() != nil {
+		b.mu.Unlock()
+		t.Fatal("blur should clear focus")
+	}
+	b.mu.Unlock()
+	if got, err := b.InputText(1); err != nil || got != "a" {
+		t.Fatalf("InputText = %q, %v", got, err)
 	}
 }
 
@@ -1142,14 +1335,14 @@ func TestFloodEnclosed(t *testing.T) {
 // TestFloodFillBounds covers paint seed validation without a game loop.
 func TestFloodFillBounds(t *testing.T) {
 	b := mustNew(t)
-	if err := b.FloodFill(-1, 0, [3]int{255, 0, 0}); err == nil {
+	if err := b.FloodFill(-1, 0, [4]int{255, 0, 0, 255}); err == nil {
 		t.Fatal("negative seed should error")
 	}
-	if err := b.FloodFill(0, 480, [3]int{255, 0, 0}); err == nil {
+	if err := b.FloodFill(0, 480, [4]int{255, 0, 0, 255}); err == nil {
 		t.Fatal("out-of-range seed should error")
 	}
 	// A valid seed only enqueues (applied by Update), so no loop needed.
-	if err := b.FloodFill(10, 10, [3]int{255, 0, 0}); err != nil {
+	if err := b.FloodFill(10, 10, [4]int{255, 0, 0, 255}); err != nil {
 		t.Fatalf("valid seed: %v", err)
 	}
 }
@@ -1650,9 +1843,9 @@ func TestGuiRender(t *testing.T) {
 	if !g.probedInput {
 		t.Fatal("input stage never ran")
 	}
-	t.Logf("stick=%d mouse=(%d,%d) clicked=%v", g.stickVal, g.mouseX, g.mouseY, g.clickedVal)
-	if g.stickVal != 0 {
-		t.Fatalf("idle stick = %d, want 0", g.stickVal)
+	t.Logf("arrows=%d mouse=(%d,%d) clicked=%v", g.keyIdle, g.mouseX, g.mouseY, g.clickedVal)
+	if g.keyIdle != 0 {
+		t.Fatalf("idle arrows = %d, want 0", g.keyIdle)
 	}
 	if g.clickedVal {
 		t.Fatal("idle clicked = true, want false")

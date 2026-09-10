@@ -11,12 +11,12 @@ import (
 	"strings"
 )
 
-// makeDim builds nested null-filled elements for dim().
+// makeDim builds nested zero-filled elements for dim().
 func makeDim(sizes []int) []Value {
 	elems := make([]Value, sizes[0])
 	if len(sizes) == 1 {
 		for i := range elems {
-			elems[i] = Null()
+			elems[i] = Int(0)
 		}
 		return elems
 	}
@@ -27,7 +27,7 @@ func makeDim(sizes []int) []Value {
 }
 
 func init() {
-	// dim(n1 [, n2, ...]): allocate a null-filled array.
+	// dim(n1 [, n2, ...]): allocate a zero-filled array.
 	// One size makes a flat array; more sizes nest (dim(2, 3) is 2x3).
 	register("dim", 1, -1, func(in *Interp, args []Value, at Pos) (Value, error) {
 		sizes := make([]int, len(args))

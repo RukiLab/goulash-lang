@@ -4,15 +4,15 @@ package main
 // Referenced by TestBuiltinRegistryComplete so the same test passes
 // in both configurations.
 var guiBuiltinNames = []string{
-	"screen", "width", "gsel",
+	"screen", "gsel",
 	"pset", "line", "boxf", "circle",
 	"gcopy", "gmode", "picload",
-	"pngsave", "gzoom", "grotate", "galpha", "paint", "font",
-	"getkey", "keychar", "stick", "mousex", "mousey", "clicked", "mousewheel", "fullscreen", "closing", "screensize", "cursor",
-	"padcount", "padbtn", "padaxis", "padname",
+	"pngsave", "galpha", "paint", "font",
+	"getkey", "keychar", "mousex", "mousey", "clicked", "mousewheel", "fullscreen", "closing", "screensize", "cursor",
+	"padcount", "padbtn", "padaxis", "padname", "resizable",
 	"touchcount", "touchx", "touchy", "winmove", "dropfiles", "dropload",
 	"mmload", "mmplay", "mmstop", "mmvol",
 	"button", "pressed", "inputbox", "gettext", "ime", "imeget",
 	"listbox", "selected", "clrobj", "dialog",
-	"chkbox", "checked", "combox", "mesbox", "getstr", "setstr", "objprm",
+	"chkbox", "checked", "combox", "mesbox", "getstr", "setstr", "objprm", "toggle",
 }

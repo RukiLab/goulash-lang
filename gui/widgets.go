@@ -14,6 +14,7 @@ import (
 	"github.com/ebitenui/ebitenui/widget"
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
+	"github.com/hajimehoshi/ebiten/v2/vector"
 )
 
 // Widgets (G3) on ebitenui: buttons, text inputs, lists, modal dialogs.
@@ -47,18 +48,39 @@ const (
 	wCheck
 	wCombo
 	wArea
+	wToggle
 )
+
+// toggleState is a custom-drawn on/off switch (no ebitenui child;
+// drawn in Draw, flipped in Update). All fields guarded by backend mu.
+type toggleState struct {
+	rect   image.Rectangle
+	label  string
+	on     bool
+	onImg  *ebiten.Image // nil = default pill art
+	offImg *ebiten.Image
+}
+
+// toggleFlip reports the state after a click edge at (x, y).
+// Pure logic, unit-testable.
+func toggleFlip(on bool, r image.Rectangle, x, y int, clicked, disabled bool) bool {
+	if clicked && !disabled && image.Pt(x, y).In(r) {
+		return !on
+	}
+	return on
+}
 
 type widgetEntry struct {
 	id     int
 	kind   widgetKind
 	child  widget.PreferredSizeLocateableWidget
 	remove widget.RemoveChildFunc
+	// disabled freezes interaction (objprm "enable"; guarded by mu).
+	disabled bool
 	// button latch + list state (guarded by backend mu).
 	pressed bool
 	items   []string
 	selIdx  int
-	input   *widget.TextInput
 	// cached mirrors the widget's text, refreshed on the game thread
 	// every Update so InputText never blocks the script (a blocking
 	// read mid-frame would stall cls/mes redraws and flicker).
@@ -69,6 +91,10 @@ type widgetEntry struct {
 	area    *widget.TextArea
 	checked bool
 	list    *widget.List
+	// custom-drawn toggle switch (wToggle; no ebitenui child).
+	toggle *toggleState
+	// custom-drawn single-line editor (wInput; no ebitenui child).
+	edit *inputState
 }
 
 // ensureUI builds the retained UI on the game thread.
@@ -104,6 +130,24 @@ func (b *WindowBackend) placeChild(id int, e *widgetEntry, child widget.Preferre
 	e.remove = remove
 	b.widgets[id] = e
 	b.root.RequestRelayout()
+}
+
+// placeCustom registers a custom-drawn entry (toggle/input: no
+// ebitenui child), replacing any entry under id. Game thread only.
+func (b *WindowBackend) placeCustom(id int, e *widgetEntry) {
+	b.ensureUI()
+	if old, ok := b.widgets[id]; ok {
+		old.remove()
+		if old.child != nil {
+			delete(b.fixLayout.rects, old.child)
+		}
+	}
+	e.child = nil
+	e.remove = func() {}
+	b.widgets[id] = e
+	if b.root != nil {
+		b.root.RequestRelayout()
+	}
 }
 
 // removeWidgetLocked drops a widget; caller runs on the game thread.
@@ -401,29 +445,7 @@ func (b *WindowBackend) Pressed(id int) (bool, error) {
 	return p, nil
 }
 
-// AddInput creates (or replaces) a text input.
-func (b *WindowBackend) AddInput(id, x, y, w, h int, text string) error {
-	if w <= 0 || h <= 0 {
-		return fmt.Errorf("inputbox のサイズは正の値である必要があります。%d x %d が指定されました", w, h)
-	}
-	b.runOnLoop(func() {
-		face := b.uiFace()
-		white := color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}
-		ti := widget.NewTextInput(
-			widget.TextInputOpts.Face(face),
-			widget.TextInputOpts.Image(b.inputImage()),
-			widget.TextInputOpts.Color(&widget.TextInputColor{
-				Idle: white, Disabled: white, Caret: white, DisabledCaret: white,
-			}),
-			widget.TextInputOpts.Padding(widget.NewInsetsSimple(4)),
-			widget.TextInputOpts.Placeholder(""),
-		)
-		ti.SetText(text)
-		e := &widgetEntry{id: id, kind: wInput, selIdx: -1, input: ti, cached: text}
-		b.placeChild(id, e, ti, x, y, w, h)
-	})
-	return nil
-}
+// AddInput lives in edit.go (custom-drawn editor).
 
 // syncWidgetCache mirrors widget runtime state (game thread only;
 // called from Update). Script reads use the mirrors so getters never
@@ -433,12 +455,12 @@ func (b *WindowBackend) syncWidgetCache() {
 	defer b.mu.Unlock()
 	for _, e := range b.widgets {
 		switch {
-		case e.kind == wInput && e.input != nil:
-			e.cached = e.input.GetText()
 		case e.kind == wArea && e.area != nil:
 			e.cached = e.area.GetText()
 		case e.kind == wCheck && e.check != nil:
 			e.checked = e.check.State() == widget.WidgetChecked
+		case e.kind == wToggle && e.toggle != nil:
+			e.checked = e.toggle.on
 		case e.kind == wCombo && e.combo != nil:
 			sel := e.combo.SelectedEntry()
 			e.selIdx = -1
@@ -452,17 +474,7 @@ func (b *WindowBackend) syncWidgetCache() {
 	}
 }
 
-// InputText returns the current input content (script-thread safe,
-// never blocks: it reads the Update-time mirror).
-func (b *WindowBackend) InputText(id int) (string, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	e, ok := b.widgets[id]
-	if !ok || e.kind != wInput || e.input == nil {
-		return "", fmt.Errorf("gettext：不明な inputbox %d です", id)
-	}
-	return e.cached, nil
-}
+// InputText lives in edit.go (custom editor state).
 
 // AddList creates (or replaces) a list box.
 func (b *WindowBackend) AddList(id, x, y, w, h int, items []string) error {
@@ -564,16 +576,197 @@ func (b *WindowBackend) AddCheck(id int, label string, x, y, w, h int, checked b
 	return nil
 }
 
-// Checked reports a checkbox state (script-thread safe, never blocks:
-// it reads the Update-time mirror).
+// Checked reports a checkbox/toggle state (script-thread safe, never
+// blocks: it reads the Update-time mirror).
 func (b *WindowBackend) Checked(id int) (bool, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	e, ok := b.widgets[id]
-	if !ok || e.kind != wCheck {
-		return false, fmt.Errorf("checked：不明な checkbox %d です", id)
+	if !ok || (e.kind != wCheck && e.kind != wToggle) {
+		return false, fmt.Errorf("checked：不明な checkbox/toggle %d です", id)
 	}
 	return e.checked, nil
+}
+
+// AddToggle creates (or replaces) a toggle switch. Non-positive w/h
+// auto-size from the font (pill h = line height, w = 2h). imgs holds
+// up to 2 picload/dropload buffer ids for the on/off states (0 =
+// slot unused): missing off falls back to a darkened on; both
+// missing draws the default pill. checked(id) reads the state.
+func (b *WindowBackend) AddToggle(id int, label string, x, y, w, h int, imgs ...int) error {
+	if len(imgs) > 2 {
+		return fmt.Errorf("toggle：画像は最大 2 個（オン/オフ）です。%d 個が指定されました", len(imgs))
+	}
+	for _, imgID := range imgs {
+		if imgID != 0 && !b.hasBuf(imgID) {
+			return fmt.Errorf("toggle：不明な画像バッファ %d です", imgID)
+		}
+	}
+	b.mu.Lock()
+	lh := b.lineH
+	if lh <= 0 {
+		lh = 20
+	}
+	b.mu.Unlock()
+	if h <= 0 {
+		h = int(lh + 0.5)
+	}
+	if w <= 0 {
+		w = 2 * h
+	}
+	if w <= 0 || h <= 0 {
+		return fmt.Errorf("toggle のサイズは正の値である必要があります。%d x %d が指定されました", w, h)
+	}
+	var opErr error
+	b.runOnLoop(func() {
+		var onImg, offImg *ebiten.Image
+		if len(imgs) > 0 && imgs[0] != 0 {
+			src := b.targets[imgs[0]]
+			if src == nil {
+				opErr = fmt.Errorf("toggle：画像バッファ %d はまだ準備できていません", imgs[0])
+				return
+			}
+			onImg = snapImage(src, w, h)
+		}
+		if len(imgs) > 1 && imgs[1] != 0 {
+			src := b.targets[imgs[1]]
+			if src == nil {
+				opErr = fmt.Errorf("toggle：画像バッファ %d はまだ準備できていません", imgs[1])
+				return
+			}
+			offImg = snapImage(src, w, h)
+		}
+		if onImg != nil && offImg == nil {
+			offImg = dimImage(onImg)
+		}
+		st := &toggleState{
+			rect: image.Rect(x, y, x+w, y+h), label: label,
+			onImg: onImg, offImg: offImg,
+		}
+		b.placeCustom(id, &widgetEntry{id: id, kind: wToggle, selIdx: -1, toggle: st})
+	})
+	return opErr
+}
+
+// snapImage scales src to exactly w×h (buttons and toggles draw
+// state faces edge-to-edge).
+func snapImage(src *ebiten.Image, w, h int) *ebiten.Image {
+	sw, sh := src.Bounds().Dx(), src.Bounds().Dy()
+	if sw == w && sh == h {
+		return src
+	}
+	out := ebiten.NewImage(w, h)
+	op := &ebiten.DrawImageOptions{}
+	if sw > 0 && sh > 0 {
+		op.GeoM.Scale(float64(w)/float64(sw), float64(h)/float64(sh))
+	}
+	out.DrawImage(src, op)
+	return out
+}
+
+// pumpToggles flips toggle switches on left-click edges (game thread;
+// called from Update after pumpInput). Clicks are observed, not
+// consumed: window-level clicked(0) still fires (buttons behave so).
+func (b *WindowBackend) pumpToggles() {
+	x, y := ebiten.CursorPosition()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.widgets == nil || !b.clickFlag[0] {
+		return
+	}
+	for _, e := range b.widgets {
+		if e.kind != wToggle || e.toggle == nil {
+			continue
+		}
+		if next := toggleFlip(e.toggle.on, e.toggle.rect, x, y, true, e.disabled); next != e.toggle.on {
+			e.toggle.on = next
+			e.checked = next
+			return // one click flips one switch
+		}
+	}
+}
+
+// drawToggles paints custom switches above the UI (game thread;
+// called from Draw). Snapshots ride mu; images stay game-local.
+func (b *WindowBackend) drawToggles(screen *ebiten.Image) {
+	type snap struct {
+		st       toggleState
+		disabled bool
+		face     *text.GoTextFace
+		ascent   float64
+	}
+	b.mu.Lock()
+	var ss []snap
+	for _, e := range b.widgets {
+		if e.kind == wToggle && e.toggle != nil {
+			s := snap{st: *e.toggle, disabled: e.disabled, face: b.face}
+			if b.face != nil {
+				s.ascent = b.face.Metrics().HAscent
+			}
+			ss = append(ss, s)
+		}
+	}
+	b.mu.Unlock()
+	for _, s := range ss {
+		drawToggle(screen, &s.st, s.disabled, s.face, s.ascent)
+	}
+}
+
+// drawToggle paints one switch: images when provided, else the pill
+// (rounded body + sliding knob) with the label at its right.
+func drawToggle(screen *ebiten.Image, st *toggleState, disabled bool, face *text.GoTextFace, ascent float64) {
+	r := st.rect
+	img := st.offImg
+	if st.on {
+		img = st.onImg
+	}
+	dim := func(c color.NRGBA) color.NRGBA {
+		if !disabled {
+			return c
+		}
+		return color.NRGBA{R: c.R / 2, G: c.G / 2, B: c.B / 2, A: c.A}
+	}
+	if img != nil {
+		op := &ebiten.DrawImageOptions{}
+		sw, sh := img.Bounds().Dx(), img.Bounds().Dy()
+		if sw > 0 && sh > 0 {
+			op.GeoM.Scale(float64(r.Dx())/float64(sw), float64(r.Dy())/float64(sh))
+		}
+		op.GeoM.Translate(float64(r.Min.X), float64(r.Min.Y))
+		if disabled {
+			op.ColorScale.Scale(0.5, 0.5, 0.5, 1)
+		}
+		screen.DrawImage(img, op)
+	} else {
+		h := float64(r.Dy())
+		rad := float32(h / 2)
+		body := dim(color.NRGBA{0x3A, 0x3F, 0x4A, 0xFF})
+		if st.on {
+			body = dim(color.NRGBA{0x2D, 0x4A, 0x7A, 0xFF})
+		}
+		cx0, cx1 := float32(r.Min.X)+rad, float32(r.Max.X)-rad
+		cy := float32(r.Min.Y) + rad
+		vector.DrawFilledCircle(screen, cx0, cy, rad, body, false)
+		vector.DrawFilledCircle(screen, cx1, cy, rad, body, false)
+		vector.DrawFilledRect(screen, cx0, float32(r.Min.Y), cx1-cx0, float32(h), body, false)
+		knob := dim(color.NRGBA{0xF2, 0xF2, 0xF2, 0xFF})
+		kx := cx0
+		if st.on {
+			kx = cx1
+		}
+		vector.DrawFilledCircle(screen, kx, cy, rad-3, knob, false)
+	}
+	if st.label != "" && face != nil {
+		op := &text.DrawOptions{}
+		op.GeoM.Translate(float64(r.Max.X)+6, float64(r.Min.Y)+ascent)
+		op.ColorScale.Reset()
+		fg := color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}
+		if disabled {
+			fg = color.NRGBA{0x77, 0x77, 0x77, 0xFF}
+		}
+		op.ColorScale.ScaleWithColor(fg)
+		text.Draw(screen, st.label, face, op)
+	}
 }
 
 // comboSliderParams images the dropdown scrollbar. The handle reuses
@@ -725,6 +918,8 @@ func (b *WindowBackend) SetAreaText(id int, text string) error {
 }
 
 // SetEnabled toggles widget interactivity; applied on the game thread.
+// Custom-drawn entries (toggle/input) track it in e.disabled since
+// they have no ebitenui child to grey out.
 func (b *WindowBackend) SetEnabled(id int, on bool) error {
 	b.mu.Lock()
 	_, ok := b.widgets[id]
@@ -733,8 +928,11 @@ func (b *WindowBackend) SetEnabled(id int, on bool) error {
 		return fmt.Errorf("objprm：不明なウィジェット %d です", id)
 	}
 	b.runOnLoop(func() {
-		if e, ok := b.widgets[id]; ok && e.child != nil {
-			e.child.GetWidget().Disabled = !on
+		if e, ok := b.widgets[id]; ok {
+			e.disabled = !on
+			if e.child != nil {
+				e.child.GetWidget().Disabled = !on
+			}
 		}
 	})
 	return nil

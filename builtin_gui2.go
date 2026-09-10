@@ -42,16 +42,6 @@ func init() {
 		return Str(wb.KeyChars()), nil
 	})
 
-	// stick(): direction/action bitmask. 1 left, 2 up, 4 right, 8 down,
-	// 16 ok (space/Z/enter), 32 cancel (esc/X), 64 left click, 128 right.
-	register("stick", 0, 0, func(in *Interp, args []Value, at Pos) (Value, error) {
-		wb, err := guiBE(in, at, "stick")
-		if err != nil {
-			return Null(), err
-		}
-		return Int(int64(wb.Stick())), nil
-	})
-
 	// mousex()/mousey(): cursor position in window pixels.
 	register("mousex", 0, 0, func(in *Interp, args []Value, at Pos) (Value, error) {
 		wb, err := guiBE(in, at, "mousex")
@@ -316,6 +306,26 @@ func init() {
 			return Null(), err
 		}
 		wb.SetFullscreen(v != 0)
+		return Null(), nil
+	})
+
+	// resizable([v]): without arguments reports whether the
+	// window can be dragged to resize (1/0); with v sets it
+	// (nonzero = on). The canvas keeps its logical size; a larger
+	// window scales the view.
+	register("resizable", 0, 1, func(in *Interp, args []Value, at Pos) (Value, error) {
+		wb, err := guiBE(in, at, "resizable")
+		if err != nil {
+			return Null(), err
+		}
+		if len(args) == 0 {
+			return Bool(wb.IsResizable()), nil
+		}
+		v, err := needInt("resizable", args, 0, at)
+		if err != nil {
+			return Null(), err
+		}
+		wb.SetResizable(v != 0)
 		return Null(), nil
 	})
 

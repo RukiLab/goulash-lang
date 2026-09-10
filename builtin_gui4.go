@@ -1,6 +1,6 @@
 //go:build gui
 
-// GUI-only builtins (G4 drawing extension: pngsave, gzoom, paint, font).
+// GUI-only builtins (G4 drawing extension: pngsave, paint, font).
 // Registered only in -tags gui builds; console builds report these
 // names as undefined functions.
 package main
@@ -30,35 +30,6 @@ func init() {
 		return Null(), nil
 	})
 
-	// gzoom(src, sx, sy, w, h, zx, zy): scaled blit at the cursor.
-	register("gzoom", 7, 7, func(in *Interp, args []Value, at Pos) (Value, error) {
-		wb, err := guiBE(in, at, "gzoom")
-		if err != nil {
-			return Null(), err
-		}
-		nums := make([]int, 5)
-		for i := range nums {
-			v, err := needInt("gzoom", args, i, at)
-			if err != nil {
-				return Null(), err
-			}
-			nums[i] = int(v)
-		}
-		sc := make([]float64, 2)
-		for i := range sc {
-			v, err := needFloat("gzoom", args, i+5, at)
-			if err != nil {
-				return Null(), err
-			}
-			sc[i] = v
-		}
-		dx, dy := wb.CursorPixels()
-		if err := wb.BlitScaled(nums[0], nums[1], nums[2], nums[3], nums[4], sc[0], sc[1], dx, dy); err != nil {
-			return Null(), rtErrf(at, "%s", err.Error())
-		}
-		return Null(), nil
-	})
-
 	// paint(x, y): flood-fill the seed region with the current color.
 	register("paint", 2, 2, func(in *Interp, args []Value, at Pos) (Value, error) {
 		wb, err := guiBE(in, at, "paint")
@@ -74,45 +45,6 @@ func init() {
 			return Null(), err
 		}
 		if err := wb.FloodFill(int(x), int(y), wb.Foreground()); err != nil {
-			return Null(), rtErrf(at, "%s", err.Error())
-		}
-		return Null(), nil
-	})
-
-	// grotate(src, sx, sy, w, h, deg [, zx, zy]): rotated blit centered
-	// at the cursor (rotation about the region center).
-	register("grotate", 6, 8, func(in *Interp, args []Value, at Pos) (Value, error) {
-		wb, err := guiBE(in, at, "grotate")
-		if err != nil {
-			return Null(), err
-		}
-		nums := make([]int, 5)
-		for i := range nums {
-			v, err := needInt("grotate", args, i, at)
-			if err != nil {
-				return Null(), err
-			}
-			nums[i] = int(v)
-		}
-		deg, err := needFloat("grotate", args, 5, at)
-		if err != nil {
-			return Null(), err
-		}
-		zx, zy := 1.0, 1.0
-		if len(args) >= 7 {
-			zx, err = needFloat("grotate", args, 6, at)
-			if err != nil {
-				return Null(), err
-			}
-		}
-		if len(args) == 8 {
-			zy, err = needFloat("grotate", args, 7, at)
-			if err != nil {
-				return Null(), err
-			}
-		}
-		dx, dy := wb.CursorPixels()
-		if err := wb.BlitRotate(nums[0], nums[1], nums[2], nums[3], nums[4], deg, zx, zy, dx, dy); err != nil {
 			return Null(), rtErrf(at, "%s", err.Error())
 		}
 		return Null(), nil

@@ -264,6 +264,34 @@ func init() {
 		}
 		return Str(out), nil
 	})
+
+	// asc(s): code point of the first character (keychar() control
+	// characters included: asc(keychar()) is 8 for backspace).
+	// Empty strings are an error.
+	register("asc", 1, 1, func(in *Interp, args []Value, at Pos) (Value, error) {
+		s, err := needString("asc", args, 0, at)
+		if err != nil {
+			return Null(), err
+		}
+		r := []rune(s)
+		if len(r) == 0 {
+			return Null(), rtErrf(at, "asc：空文字列のコードは取得できません")
+		}
+		return Int(int64(r[0])), nil
+	})
+
+	// chr(code): single-character string for a Unicode code point.
+	// Surrogates and out-of-range values are an error.
+	register("chr", 1, 1, func(in *Interp, args []Value, at Pos) (Value, error) {
+		c, err := needInt("chr", args, 0, at)
+		if err != nil {
+			return Null(), err
+		}
+		if c < 0 || c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF) {
+			return Null(), argErr("chr", 0, at, "無効なコードポイント %d です", c)
+		}
+		return Str(string(rune(c))), nil
+	})
 }
 
 // joinDir rejoins a slash-style dir with a file part, keeping the caller's

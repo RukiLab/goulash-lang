@@ -39,27 +39,6 @@ func init() {
 		return Null(), nil
 	})
 
-	// width(w, h): alias of screen (window size).
-	register("width", 2, 2, func(in *Interp, args []Value, at Pos) (Value, error) {
-		wb, err := guiBE(in, at, "width")
-		if err != nil {
-			return Null(), err
-		}
-		w, err := needInt("width", args, 0, at)
-		if err != nil {
-			return Null(), err
-		}
-		h, err := needInt("width", args, 1, at)
-		if err != nil {
-			return Null(), err
-		}
-		if w <= 0 || h <= 0 {
-			return Null(), rtErrf(at, "width のサイズは正の値である必要があります。%d x %d が指定されました", w, h)
-		}
-		wb.ResizeCanvas(int(w), int(h))
-		return Null(), nil
-	})
-
 	// gsel(id): switch the draw buffer (0 = main, visible).
 	register("gsel", 1, 1, func(in *Interp, args []Value, at Pos) (Value, error) {
 		wb, err := guiBE(in, at, "gsel")
@@ -173,11 +152,17 @@ func init() {
 		return Null(), nil
 	})
 
-	// gcopy(src, sx, sy, w, h): blit a buffer region at the cursor.
-	register("gcopy", 5, 5, func(in *Interp, args []Value, at Pos) (Value, error) {
+	// gcopy(src, sx, sy, w, h [, zx, zy [, deg]]): blit a buffer
+	// region at the cursor. 5 args is a plain copy; zx, zy scale
+	// it (former gzoom); deg additionally rotates about the region
+	// center (former grotate), keeping the center at the cursor.
+	register("gcopy", 5, 8, func(in *Interp, args []Value, at Pos) (Value, error) {
 		wb, err := guiBE(in, at, "gcopy")
 		if err != nil {
 			return Null(), err
+		}
+		if len(args) == 6 {
+			return Null(), rtErrf(at, "gcopy は引数を 5 個、7 個または 8 個必要としますが、%d 個が渡されました", len(args))
 		}
 		nums := make([]int, 5)
 		for i := range nums {
@@ -191,7 +176,31 @@ func init() {
 			return Null(), rtErrf(at, "gcopy のサイズは正の値である必要があります。%d x %d が指定されました", nums[3], nums[4])
 		}
 		dx, dy := wb.CursorPixels()
-		if err := wb.Blit(nums[0], nums[1], nums[2], nums[3], nums[4], dx, dy); err != nil {
+		if len(args) == 5 {
+			if err := wb.Blit(nums[0], nums[1], nums[2], nums[3], nums[4], dx, dy); err != nil {
+				return Null(), rtErrf(at, "%s", err.Error())
+			}
+			return Null(), nil
+		}
+		zx, err := needFloat("gcopy", args, 5, at)
+		if err != nil {
+			return Null(), err
+		}
+		zy, err := needFloat("gcopy", args, 6, at)
+		if err != nil {
+			return Null(), err
+		}
+		if len(args) == 7 {
+			if err := wb.BlitScaled(nums[0], nums[1], nums[2], nums[3], nums[4], zx, zy, dx, dy); err != nil {
+				return Null(), rtErrf(at, "%s", err.Error())
+			}
+			return Null(), nil
+		}
+		deg, err := needFloat("gcopy", args, 7, at)
+		if err != nil {
+			return Null(), err
+		}
+		if err := wb.BlitRotate(nums[0], nums[1], nums[2], nums[3], nums[4], deg, zx, zy, dx, dy); err != nil {
 			return Null(), rtErrf(at, "%s", err.Error())
 		}
 		return Null(), nil

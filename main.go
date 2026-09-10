@@ -135,7 +135,7 @@ func runGUI(file string, prog *Program, scriptArgs []string) {
 			// Report immediately (verifiable even if the window is killed)
 			// and also inside the window, which stays open for inspection.
 			fmt.Fprintln(os.Stderr, "エラー:", runErr)
-			be.SetColor(255, 90, 90)
+			be.SetColor(255, 90, 90, 255)
 			be.Println("エラー: " + runErr.Error())
 			be.ResetColor()
 		} else {

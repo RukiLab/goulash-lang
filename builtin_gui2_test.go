@@ -136,9 +136,8 @@ func TestGuiBuiltinValidation(t *testing.T) {
 	if err != nil || v.K != KNull {
 		t.Fatalf("mmstop(): got %v, %v", v, err)
 	}
-	v, err = guiEval(t, "stick()")
-	if err != nil || v.K != KInt {
-		t.Fatalf("stick(): got %v, %v", v, err)
+	if _, err := guiEval(t, "stick()"); err == nil {
+		t.Fatal("stick should be undefined")
 	}
 }
 
@@ -226,23 +225,32 @@ func TestGuiDrawValidation(t *testing.T) {
 	if v, err := guiEval(t, "paint(10, 10)"); err != nil || v.K != KNull {
 		t.Fatalf("paint(10, 10): got %v, %v", v, err)
 	}
-	if _, err := guiEval(t, "gzoom(99, 0, 0, 10, 10, 1, 1)"); err == nil {
-		t.Fatal("gzoom unknown buffer should error")
+	if _, err := guiEval(t, "gcopy(99, 0, 0, 10, 10)"); err == nil {
+		t.Fatal("gcopy unknown buffer should error")
 	}
-	if _, err := guiEval(t, "gzoom(0, 0, 0, 10, 10, 0, 1)"); err == nil {
-		t.Fatal("gzoom zero scale should error")
+	if _, err := guiEval(t, "gcopy(99, 0, 0, 10, 10, 1, 1)"); err == nil {
+		t.Fatal("gcopy scaled unknown buffer should error")
 	}
-	if _, err := guiEval(t, "gzoom(0, \"x\", 0, 10, 10, 1, 1)"); err == nil {
-		t.Fatal("gzoom string arg should error")
+	if _, err := guiEval(t, "gcopy(0, 0, 0, 10, 10, 0, 1)"); err == nil {
+		t.Fatal("gcopy zero scale should error")
 	}
-	if _, err := guiEval(t, "grotate(99, 0, 0, 10, 10, 30)"); err == nil {
-		t.Fatal("grotate unknown buffer should error")
+	if _, err := guiEval(t, "gcopy(0, \"x\", 0, 10, 10, 1, 1)"); err == nil {
+		t.Fatal("gcopy string arg should error")
 	}
-	if _, err := guiEval(t, "grotate(0, 0, 0, 10, 10, 30, 0)"); err == nil {
-		t.Fatal("grotate zero scale should error")
+	if _, err := guiEval(t, "gcopy(99, 0, 0, 10, 10, 1, 1, 30)"); err == nil {
+		t.Fatal("gcopy rotated unknown buffer should error")
 	}
-	if _, err := guiEval(t, "grotate(0, \"x\", 0, 10, 10, 30)"); err == nil {
-		t.Fatal("grotate string arg should error")
+	if _, err := guiEval(t, "gcopy(0, 0, 0, 10, 10, 1, 0, 30)"); err == nil {
+		t.Fatal("gcopy rotated zero scale should error")
+	}
+	if _, err := guiEval(t, "gcopy(0, 0, 0, 10, 10, 1)"); err == nil {
+		t.Fatal("gcopy 6 args should error")
+	}
+	if _, err := guiEval(t, "gzoom(0, 0, 0, 10, 10, 1, 1)"); err == nil {
+		t.Fatal("gzoom should be undefined")
+	}
+	if _, err := guiEval(t, "grotate(0, 0, 0, 10, 10, 30)"); err == nil {
+		t.Fatal("grotate should be undefined")
 	}
 	if _, err := guiEval(t, "galpha(300)"); err == nil {
 		t.Fatal("galpha out-of-range should error")

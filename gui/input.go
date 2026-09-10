@@ -4,6 +4,7 @@ package gui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/hajimehoshi/ebiten/v2"
 )
@@ -21,6 +22,47 @@ type charRep struct {
 	last string
 	next int64 // tick threshold for the next fire
 	seen int64 // last tick with input (grace tracking)
+}
+
+// ctrlKeys maps physical control keys to the character keychar()
+// reports for them (the ASCII code as a single-char string).
+// AppendInputChars never yields these; they are synthesized with
+// the same repeat timing below.
+var ctrlKeys = []struct {
+	key ebiten.Key
+	ch  string
+}{
+	{ebiten.KeyBackspace, "\x08"},
+	{ebiten.KeyTab, "\x09"},
+	{ebiten.KeyEnter, "\r"},
+	{ebiten.KeyKPEnter, "\r"},
+	{ebiten.KeyEscape, "\x1b"},
+	{ebiten.KeyDelete, "\x7f"},
+}
+
+// ctrlState tracks one control key's repeat session in wall ticks.
+type ctrlState struct {
+	down  bool
+	start int64 // tick the current hold began
+	last  int64 // tick of the last fire
+}
+
+// ctrlStep fires on a new press, then while held with the same
+// repDelay/repInterval timing as charStep. Pure logic, unit-testable.
+func ctrlStep(st *ctrlState, down bool, now int64) bool {
+	if !down {
+		st.down = false
+		return false
+	}
+	if !st.down {
+		st.down, st.start, st.last = true, now, now
+		return true
+	}
+	if now-st.start >= repDelay && now-st.last >= repInterval {
+		st.last = now
+		return true
+	}
+	return false
 }
 
 // charStep maps a per-frame rune snapshot to a firing string.
@@ -286,21 +328,39 @@ func (b *WindowBackend) SetCursorVisible(on bool) {
 // shift, and caps-correct, e.g. Shift+A is "A"). Every-frame polling
 // is expected. New text fires at once; held text refires after
 // repDelay ticks, then every repInterval ticks; "" when nothing
-// fires. While the input() line editor owns the key stream it reports
-// "" so keystrokes are not processed twice. Non-character keys
-// (arrows, F-keys) never appear here; use getkey() for those.
+// fires. Control keys are synthesized as their ASCII characters
+// (backspace "\x08", tab "\x09", enter "\r", esc "\x1b", delete
+// "\x7f") with the same repeat timing, so an immediate-mode line
+// editor can be built on keychar() alone; use asc() for the codes.
+// While the input() line editor or a focused inputbox owns the key
+// stream it reports "" so keystrokes are not processed twice. Other
+// non-character keys (arrows, F-keys) never appear here; use
+// getkey() for those.
 func (b *WindowBackend) KeyChars() string {
 	b.mu.Lock()
-	active := b.line != nil
+	owned := b.line != nil || b.focusedLocked() != nil
 	b.mu.Unlock()
-	if active {
+	if owned {
 		return ""
 	}
-	s := string(ebiten.AppendInputChars(nil))
+	var sb strings.Builder
+	sb.WriteString(string(ebiten.AppendInputChars(nil)))
 	now := b.Tick()
+	down := make([]bool, len(ctrlKeys))
+	for i, ck := range ctrlKeys {
+		down[i] = ebiten.IsKeyPressed(ck.key)
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return charStep(&b.charSt, s, now)
+	if len(b.ctrlSt) != len(ctrlKeys) {
+		b.ctrlSt = make([]ctrlState, len(ctrlKeys))
+	}
+	for i, ck := range ctrlKeys {
+		if ctrlStep(&b.ctrlSt[i], down[i], now) {
+			sb.WriteString(ck.ch)
+		}
+	}
+	return charStep(&b.charSt, sb.String(), now)
 }
 
 // KeyDown reports whether a script key code is held. Modifier codes
@@ -319,36 +379,4 @@ func (b *WindowBackend) KeyDown(code int) (bool, bool) {
 		return false, false
 	}
 	return ebiten.IsKeyPressed(k), true
-}
-
-// Stick builds the direction/action bitmask:
-// 1 left, 2 up, 4 right, 8 down, 16 ok (space/Z/enter),
-// 32 cancel (esc/X), 64 left click, 128 right click.
-func (b *WindowBackend) Stick() int {
-	s := 0
-	if ebiten.IsKeyPressed(ebiten.KeyArrowLeft) {
-		s |= 1
-	}
-	if ebiten.IsKeyPressed(ebiten.KeyArrowUp) {
-		s |= 2
-	}
-	if ebiten.IsKeyPressed(ebiten.KeyArrowRight) {
-		s |= 4
-	}
-	if ebiten.IsKeyPressed(ebiten.KeyArrowDown) {
-		s |= 8
-	}
-	if ebiten.IsKeyPressed(ebiten.KeySpace) || ebiten.IsKeyPressed(ebiten.KeyZ) || ebiten.IsKeyPressed(ebiten.KeyEnter) {
-		s |= 16
-	}
-	if ebiten.IsKeyPressed(ebiten.KeyEscape) || ebiten.IsKeyPressed(ebiten.KeyX) {
-		s |= 32
-	}
-	if ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) {
-		s |= 64
-	}
-	if ebiten.IsMouseButtonPressed(ebiten.MouseButtonRight) {
-		s |= 128
-	}
-	return s
 }

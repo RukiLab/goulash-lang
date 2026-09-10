@@ -7,7 +7,7 @@ repeat 100000 {
     mes("click or ESC to exit")
     mes("")
     mes("mouse=" + str(mousex()) + "," + str(mousey()))
-    mes("stick=" + str(stick()))
+    mes("arrows=" + str(getkey(37)) + str(getkey(38)) + str(getkey(39)) + str(getkey(40)))
     if clicked() {
         break
     }

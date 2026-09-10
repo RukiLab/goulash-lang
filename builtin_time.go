@@ -177,4 +177,35 @@ func init() {
 		}
 		return Int(0), nil
 	})
+
+	// pipeexec(name, args...): run an external command, return its
+	// stdout as a string. Stdin is detached (null device) so the
+	// child can never steal script input; stderr passes through.
+	// Failure to start, or a non-zero exit, is an error (the plain
+	// exec() twin returns codes instead of capturing output).
+	register("pipeexec", 1, -1, func(in *Interp, args []Value, at Pos) (Value, error) {
+		name, err := needString("pipeexec", args, 0, at)
+		if err != nil {
+			return Null(), err
+		}
+		argv := make([]string, len(args)-1)
+		for i := range args[1:] {
+			s, err := needString("pipeexec", args, i+1, at)
+			if err != nil {
+				return Null(), err
+			}
+			argv[i] = s
+		}
+		cmd := exec.Command(name, argv...)
+		var out strings.Builder
+		cmd.Stdout = &out
+		cmd.Stderr = in.errOut
+		if err := cmd.Run(); err != nil {
+			if exit, ok := err.(*exec.ExitError); ok {
+				return Null(), rtErrf(at, "pipeexec：%s は終了コード %d で終了しました", name, exit.ExitCode())
+			}
+			return Null(), rtErrf(at, "pipeexec：%s", err.Error())
+		}
+		return Str(out.String()), nil
+	})
 }

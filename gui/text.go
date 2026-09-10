@@ -67,6 +67,9 @@ func (b *WindowBackend) Println(s string) {
 func (b *WindowBackend) ReadLine(prompt string) (string, bool) {
 	req := &lineReq{prompt: prompt, done: make(chan string, 1)}
 	b.mu.Lock()
+	// The line editor takes the key stream: defocus boxes so
+	// keystrokes cannot split between the box and the line.
+	b.blurEditsLocked()
 	// Flush pending partial text above the editor line.
 	if b.partial != "" {
 		b.segs = append(b.segs, textSeg{x: b.partX, y: b.curY, s: b.partial, fg: b.partFg})
@@ -94,11 +97,11 @@ func (b *WindowBackend) Clear() {
 	})
 }
 
-// SetColor sets subsequent text color.
-func (b *WindowBackend) SetColor(r, g, bl int) {
+// SetColor sets subsequent text/draw color (alpha included).
+func (b *WindowBackend) SetColor(r, g, bl, a int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.fg = color.NRGBA{R: uint8(clamp(r)), G: uint8(clamp(g)), B: uint8(clamp(bl)), A: 0xFF}
+	b.fg = color.NRGBA{R: uint8(clamp(r)), G: uint8(clamp(g)), B: uint8(clamp(bl)), A: uint8(clamp(a))}
 }
 
 // ResetColor restores white text.
@@ -134,6 +137,18 @@ func (b *WindowBackend) SetFullscreen(on bool) {
 	b.runOnLoop(func() {
 		ebiten.SetFullscreen(on)
 	})
+}
+
+// IsResizable reports whether the window can be dragged to resize.
+func (b *WindowBackend) IsResizable() bool {
+	return ebiten.IsWindowResizable()
+}
+
+// SetResizable allows (or forbids) drag-resizing the window.
+// The canvas keeps its logical size (screen() controls that);
+// a larger window scales the view.
+func (b *WindowBackend) SetResizable(on bool) {
+	ebiten.SetWindowResizable(on)
 }
 
 // ScreenSize reports fullscreen width, height and monitor count.
@@ -225,18 +240,27 @@ func (b *WindowBackend) SetFontFile(spec string, size int) error {
 	return nil
 }
 
-// caretPixels returns the line-editor caret x in device pixels,
+// caretPixels returns the active editor caret in device pixels,
 // measured with the current face (proportional fonts drift from the
-// cell grid, so cell math misplaces the IME composition). ok is false
-// with no active editor.
-func (b *WindowBackend) caretPixels() (x float64, row int, ok bool) {
+// cell grid, so cell math misplaces the IME composition). The
+// focused inputbox wins over the input() line; ok is false with no
+// active editor.
+func (b *WindowBackend) caretPixels() (x, y float64, ok bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.line == nil || b.face == nil {
+	if b.face == nil {
+		return 0, 0, false
+	}
+	if ed := b.focusedLocked(); ed != nil {
+		w, _ := text.Measure(string(ed.text[:ed.caret]), b.face, 0)
+		return float64(ed.rect.Min.X) + 4 + w - float64(ed.scroll),
+			float64(ed.rect.Min.Y), true
+	}
+	if b.line == nil {
 		return 0, 0, false
 	}
 	w, _ := text.Measure(b.line.prompt+string(b.line.buf), b.face, 0)
-	return w, b.curY, true
+	return w, float64(b.curY) * b.lineH, true
 }
 
 // MoveTo sets the cursor. In GUI it is pixel-based for the graphics

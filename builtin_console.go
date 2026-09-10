@@ -25,16 +25,19 @@ func init() {
 		return Null(), nil
 	})
 
-	// color(r, g, b): set text color (0-255 each). color() resets it.
-	register("color", 0, 3, func(in *Interp, args []Value, at Pos) (Value, error) {
+	// color(r, g, b [, a]): set text/draw color (0-255 each).
+	// a is the alpha (0 transparent .. 255 opaque, default 255).
+	// Terminals cannot render text alpha, so CUI ignores it.
+	// color() resets the color.
+	register("color", 0, 4, func(in *Interp, args []Value, at Pos) (Value, error) {
 		if len(args) == 0 {
 			in.be.ResetColor()
 			return Null(), nil
 		}
-		if len(args) != 3 {
-			return Null(), rtErrf(at, "color は 0 個または 3 個の引数が必要ですが、%d 個が渡されました", len(args))
+		if len(args) != 3 && len(args) != 4 {
+			return Null(), rtErrf(at, "color は 0 個、3 個または 4 個の引数が必要ですが、%d 個が渡されました", len(args))
 		}
-		rgb := make([]int, 3)
+		rgba := []int{0, 0, 0, 255}
 		for i := range args {
 			v, err := needInt("color", args, i, at)
 			if err != nil {
@@ -43,9 +46,9 @@ func init() {
 			if v < 0 || v > 255 {
 				return Null(), argErr("color", i, at, "0 から 255 の範囲で指定してください。%d が指定されました", v)
 			}
-			rgb[i] = int(v)
+			rgba[i] = int(v)
 		}
-		in.be.SetColor(rgb[0], rgb[1], rgb[2])
+		in.be.SetColor(rgba[0], rgba[1], rgba[2], rgba[3])
 		return Null(), nil
 	})
 

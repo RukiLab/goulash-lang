@@ -90,6 +90,7 @@ type WindowBackend struct {
 	dropFS    fs.FS // last snapshot (kept for dropload)
 	// Keychar repeat state (keychar(); guarded by mu).
 	charSt charRep
+	ctrlSt []ctrlState // one slot per ctrlKeys entry
 	// IME state (ime/imeget; Field is pumped on the game thread only,
 	// mirrors are guarded by mu for script-side reads).
 	imeField     textinput.Field
@@ -112,6 +113,7 @@ func New(w, h int) (*WindowBackend, error) {
 	}
 	return &WindowBackend{
 		w: w, h: h,
+		ctrlSt:   make([]ctrlState, len(ctrlKeys)),
 		fg:       color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF},
 		face:     face,
 		fontSize: fontSize,
@@ -212,6 +214,8 @@ func (b *WindowBackend) Update() error {
 	b.pumpInput()
 	b.pumpDrops()
 	b.pumpIME()
+	b.pumpToggles()
+	b.pumpInputs()
 	if b.ui != nil {
 		b.ui.Update()
 	}
@@ -222,6 +226,9 @@ func (b *WindowBackend) Update() error {
 	if b.wantQuit {
 		return ebiten.Termination
 	}
+	// The focused box already consumed its characters in pumpInputs
+	// (same tick); only feed the line editor here so keystrokes are
+	// never processed twice.
 	if b.line != nil {
 		// While the IME field is focused, committed text arrives via
 		// pumpIME (textinput owns the key stream); otherwise use the
@@ -340,6 +347,8 @@ func (b *WindowBackend) Draw(screen *ebiten.Image) {
 		}
 		b.ui.Draw(screen)
 	}
+	b.drawToggles(screen)
+	b.drawInputs(screen)
 }
 
 // Layout fixes the logical screen size.

@@ -24,6 +24,24 @@
         "scopeName": "source.goulash",
         "path": "./syntaxes/goulash.tmLanguage.json"
       }
+    ],
+    "keybindings": [
+      {
+        "command": "workbench.action.terminal.sendSequence",
+        "key": "F5",
+        "when": "editorLangId == goulash",
+        "args": {
+          "text": "gsh run \"${file}\"\u000D"
+        }
+      },
+      {
+        "command": "workbench.action.terminal.sendSequence",
+        "key": "ctrl+F5",
+        "when": "editorLangId == goulash",
+        "args": {
+          "text": "gsh run \"${file}\" --gui\u000D"
+        }
+      }
     ]
   }
 }

@@ -123,6 +123,12 @@ if getstr(14) == "one\ntwo" {
 } else {
     ng("T4 mesbox prefill")
 }
+toggle(15, "電源", 20, 250, 64, 28)
+if checked(15) == false {
+    ok("T4 toggle initial")
+} else {
+    ng("T4 toggle initial")
+}
 // mesbox は表示専用。setstr で書き換えて getstr で読む。
 setstr(14, "three\nfour")
 if getstr(14) == "three\nfour" {
@@ -131,13 +137,15 @@ if getstr(14) == "three\nfour" {
     ng("T4 mesbox setstr")
 }
 pos(16, 420)
-mes("入力・チェック外し・選択変更を操作して次へ")
+mes("入力・チェック外し・選択変更・スイッチ切替を操作して次へ")
 wait_next()
 cls()
 mes("agree=" + str(checked(12)))
 mes("color=" + str(selected(13)))
 mes("text=" + gettext(11))
+mes("power=" + str(checked(15)))
 ask("T4 widget interactive", "操作が読取に反映されたか")
+ask("T4 toggle look", "スイッチ（ピル+つまみ、オンで青）が見えたか")
 clrobj()
 
 // ---- T5: ダイアログ ----
@@ -257,6 +265,27 @@ if hit {
     ok("T8 keychar upper")
 } else {
     ng("T8 keychar upper")
+}
+
+cls()
+pos(16, 40)
+mes("離して→5秒: Backspace を押す（asc で 8 が出る）")
+sleep(1000)
+t0 = tick()
+hit = false
+while tick() - t0 < 300 {
+    k = keychar()
+    if k != "" {
+        if asc(k) == 8 {
+            hit = true
+        }
+    }
+    await()
+}
+if hit {
+    ok("T8 keychar backspace")
+} else {
+    ng("T8 keychar backspace")
 }
 
 // ---- T9: マウス ----

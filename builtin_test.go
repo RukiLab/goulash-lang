@@ -65,8 +65,8 @@ func TestBuiltinRegistryComplete(t *testing.T) {
 		"push", "pop", "join", "dim",
 		"sort", "reverse", "insert", "remove", "slice", "find",
 		"keys", "has", "del",
-		"replace", "upper", "lower",
-		"lextokens", "strwidth",
+		"replace", "upper", "lower", "asc", "chr",
+		"lextokens", "strwidth", "pipeexec",
 	}
 	got := map[string]bool{}
 	for _, n := range builtinNames() {
@@ -247,15 +247,38 @@ func TestExec(t *testing.T) {
 	mustErrIO(t, "mes(exec(\"no-such-command-xyz\"))\n", "exec：")
 }
 
+func TestPipeexec(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		mustOutIO(t, "mes(pipeexec(\"cmd\", \"/c\", \"echo\", \"hi\"))\n", "", "hi\r\n\n")
+	} else {
+		mustOutIO(t, "mes(pipeexec(\"printf\", \"hi\"))\n", "", "hi\n")
+	}
+	mustErrIO(t, "mes(pipeexec(\"no-such-command-xyz\"))\n", "pipeexec：")
+	if runtime.GOOS == "windows" {
+		mustErrIO(t, "mes(pipeexec(\"cmd\", \"/c\", \"exit\", \"3\"))\n", "終了コード 3")
+	} else {
+		mustErrIO(t, "mes(pipeexec(\"sh\", \"-c\", \"exit 3\"))\n", "終了コード 3")
+	}
+}
+
+func TestAscChr(t *testing.T) {
+	mustOut(t, "mes(asc(\"A\"))\nmes(asc(\"あ\"))\nmes(chr(65))\nmes(chr(12354))\n", "65\n12354\nA\nあ\n")
+	mustErr(t, "asc(\"\")\n", "空文字列")
+	mustErr(t, "chr(-1)\n", "無効なコードポイント")
+	mustErr(t, "chr(55296)\n", "無効なコードポイント")
+	mustErr(t, "chr(1114112)\n", "無効なコードポイント")
+}
+
 func TestConsoleIO(t *testing.T) {
 	mustOutIO(t, "print(\"a\", 1)\nprint(\"b\")\nmes(\"c\")\n", "", "a 1bc\n")
 	mustOutIO(t, "cls()\n", "", "\x1b[2J\x1b[H")
 	mustOutIO(t, "color(255, 0, 0)\ncolor()\n", "", "\x1b[38;2;255;0;0m\x1b[0m")
+	mustOutIO(t, "color(255, 0, 0, 128)\ncolor()\n", "", "\x1b[38;2;255;0;0m\x1b[0m")
 	mustOutIO(t, "pos(3, 4)\n", "", "\x1b[5;4H")
 	mustOutIO(t, "pos(-1, 0)\n", "", "\x1b[1;0H")
 	mustOutIO(t, "pos(-5, -3)\n", "", "\x1b[-2;-4H")
 	mustOutIO(t, "title(\"T\")\n", "", "\x1b]0;T\x07")
-	mustErrIO(t, "color(1, 2)\n", "0 個または 3 個")
+	mustErrIO(t, "color(1, 2)\n", "0 個、3 個または 4 個")
 	mustErrIO(t, "color(300, 0, 0)\n", "0 から 255")
 }
 
