@@ -1,6 +1,11 @@
 package main
 
 import (
+	"fmt"
+	"image"
+	"image/png"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -142,6 +147,40 @@ func TestGuiBuiltinValidation(t *testing.T) {
 	}
 	if _, err := guiEval(t, "stick()"); err == nil {
 		t.Fatal("stick should be undefined")
+	}
+}
+
+// Oversized images panic inside the engine on the loop goroutine
+// (uncatchable), so the builtins must reject them with script errors
+// before anything reaches Ebiten. Headless-safe: rejection happens
+// before any GPU/window call.
+func TestGuiImageLimits(t *testing.T) {
+	if _, err := guiEval(t, "screen(4097, 1)"); err == nil || !strings.Contains(err.Error(), "上限") {
+		t.Fatalf("screen width over limit: got %v", err)
+	}
+	if _, err := guiEval(t, "screen(100000, 100000)"); err == nil || !strings.Contains(err.Error(), "上限") {
+		t.Fatalf("screen huge: got %v", err)
+	}
+	if _, err := guiEval(t, `title("a\0b")`); err == nil || !strings.Contains(err.Error(), "NUL") {
+		t.Fatalf("title NUL: got %v", err)
+	}
+	// 4097x1 PNG decodes fine but must fail before upload (and must not
+	// leak a buffer id doing so).
+	dir := t.TempDir()
+	p := filepath.Join(dir, "wide.png")
+	f, err := os.Create(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, image.NewRGBA(image.Rect(0, 0, 4097, 1))); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	src := fmt.Sprintf("picload(%q)", filepath.ToSlash(p))
+	if _, err := guiEval(t, src); err == nil || !strings.Contains(err.Error(), "大きすぎます") {
+		t.Fatalf("picload oversize: got %v", err)
 	}
 }
 

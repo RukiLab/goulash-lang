@@ -13,6 +13,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -128,6 +129,20 @@ func cmdRun(args []string) {
 	}
 }
 
+// enginePanicMsg renders a recovered engine (Ebiten) panic as one clean
+// line: the first line of its message, without the Go stack trace.
+// A script must never see engine internals as a crash dump.
+func enginePanicMsg(r any) string {
+	s := strings.TrimSpace(fmt.Sprint(r))
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = strings.TrimSpace(s[:i])
+	}
+	if s == "" {
+		s = "不明なエンジンエラー"
+	}
+	return s
+}
+
 // runGUI executes prog in a window.
 func runGUI(file string, prog *Program, scriptArgs []string) {
 	_ = file
@@ -143,20 +158,39 @@ func runGUI(file string, prog *Program, scriptArgs []string) {
 	// so a script finishing after an early window close never blocks.
 	// A closed window with a still-running script reads as no error.
 	runCh := make(chan error, 1)
-	loopCode := gui.RunLoop(wb, func() {
-		runErr := in.Run(prog)
-		if runErr != nil {
-			// Report immediately (verifiable even if the window is killed)
-			// and also inside the window, which stays open for inspection.
-			fmt.Fprintln(os.Stderr, "エラー:", runErr)
-			wb.SetColor(255, 90, 90, 255)
-			wb.Println("エラー: " + runErr.Error())
-			wb.ResetColor()
-		} else {
-			wb.SetDone()
-		}
-		runCh <- runErr
-	})
+	// Ebiten panics on engine misuse (oversized images, disposed
+	// resources...), whether surfaced from the game thread or a
+	// builtin on the script thread. Both become a clean error and
+	// exit 1, never a Go stack trace.
+	loopCode := func() (code int) {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintln(os.Stderr, "エラー:", enginePanicMsg(r))
+				code = 1
+			}
+		}()
+		return gui.RunLoop(wb, func() {
+			runErr := func() (err error) {
+				defer func() {
+					if r := recover(); r != nil {
+						err = errors.New(enginePanicMsg(r))
+					}
+				}()
+				return in.Run(prog)
+			}()
+			if runErr != nil {
+				// Report immediately (verifiable even if the window is killed)
+				// and also inside the window, which stays open for inspection.
+				fmt.Fprintln(os.Stderr, "エラー:", runErr)
+				wb.SetColor(255, 90, 90, 255)
+				wb.Println("エラー: " + runErr.Error())
+				wb.ResetColor()
+			} else {
+				wb.SetDone()
+			}
+			runCh <- runErr
+		})
+	}()
 	var runErr error
 	select {
 	case runErr = <-runCh:

@@ -33,6 +33,11 @@ func init() {
 		if w <= 0 || h <= 0 {
 			return Null(), rtErrf(at, "screen のサイズは正の値である必要があります。%d x %d が指定されました", w, h)
 		}
+		// Oversized canvases panic inside the engine on the loop
+		// goroutine (uncatchable), so cap them here with a script error.
+		if w > int64(gui.MaxImageDim) || h > int64(gui.MaxImageDim) {
+			return Null(), rtErrf(at, "screen のサイズは上限 %d x %d までです", gui.MaxImageDim, gui.MaxImageDim)
+		}
 		wb.ResizeCanvas(int(w), int(h))
 		return Null(), nil
 	})

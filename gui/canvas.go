@@ -21,6 +21,11 @@ import (
 // maxBuffers caps window ids (memory guard).
 const maxBuffers = 16
 
+// MaxImageDim caps one side of screen()/picload images. Bigger images
+// panic inside the engine on the loop goroutine (uncatchable across
+// goroutines), so scripts get a normal error instead.
+const MaxImageDim = 4096
+
 // enqueue adds a draw command for the next Update.
 func (b *WindowBackend) enqueue(cmd func()) {
 	b.mu.Lock()
@@ -311,6 +316,10 @@ func (b *WindowBackend) allocImageID() (int, error) {
 
 // allocUpload reserves a buffer id and uploads src on the game thread.
 func (b *WindowBackend) allocUpload(src image.Image) (int, error) {
+	// Check before reserving an id: a rejection must not leak one.
+	if size := src.Bounds().Size(); size.X > MaxImageDim || size.Y > MaxImageDim {
+		return 0, fmt.Errorf("picload：画像が大きすぎます（上限 %d x %d）", MaxImageDim, MaxImageDim)
+	}
 	id, err := b.allocImageID()
 	if err != nil {
 		return 0, err

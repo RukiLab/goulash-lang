@@ -1,6 +1,8 @@
 // P4 builtins: console input/output.
 package main
 
+import "strings"
+
 func init() {
 	// print(args...): mes without the trailing newline.
 	register("print", 0, -1, func(in *Interp, args []Value, at Pos) (Value, error) {
@@ -53,10 +55,15 @@ func init() {
 	})
 
 	// title(s): ask the terminal to change its title (best effort).
+	// NUL would panic the GUI windowing layer, so it is rejected here
+	// for both backends.
 	register("title", 1, 1, func(in *Interp, args []Value, at Pos) (Value, error) {
 		s, err := needString("title", args, 0, at)
 		if err != nil {
 			return Null(), err
+		}
+		if strings.IndexByte(s, 0) >= 0 {
+			return Null(), argErr("title", 0, at, "タイトルに NUL 文字は使用できません")
 		}
 		in.be.SetTitle(s)
 		return Null(), nil
