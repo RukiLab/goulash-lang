@@ -150,32 +150,62 @@ func init() {
 		return Float(math.Pow(b, e)), nil
 	})
 
-	// limit(v, lo, hi): clamp into range. All-int inputs yield int.
-	register("limit", 3, 3, func(in *Interp, args []Value, at Pos) (Value, error) {
-		v, err := needFloat("limit", args, 0, at)
-		if err != nil {
-			return Null(), err
+	// limit(v [, lo [, hi]]): clamp into range. Omitted lo/hi are
+	// the type minimum/maximum (so limit(v) is identity). All-int
+	// inputs clamp in int64 and yield int; otherwise float64.
+	register("limit", 1, 3, func(in *Interp, args []Value, at Pos) (Value, error) {
+		intPath := true
+		for _, a := range args {
+			if a.K != KInt {
+				intPath = false
+				break
+			}
 		}
-		lo, err := needFloat("limit", args, 1, at)
-		if err != nil {
-			return Null(), err
+		if intPath {
+			lo := int64(math.MinInt64)
+			hi := int64(math.MaxInt64)
+			if len(args) >= 2 {
+				lo = args[1].I
+			}
+			if len(args) == 3 {
+				hi = args[2].I
+			}
+			if lo > hi {
+				return Null(), rtErrf(at, "limit：下限 %d が上限 %d を超えています", lo, hi)
+			}
+			c := args[0].I
+			if c < lo {
+				c = lo
+			}
+			if c > hi {
+				c = hi
+			}
+			return Int(c), nil
 		}
-		hi, err := needFloat("limit", args, 2, at)
-		if err != nil {
-			return Null(), err
+		nums := make([]float64, len(args))
+		for i := range args {
+			f, err := needFloat("limit", args, i, at)
+			if err != nil {
+				return Null(), err
+			}
+			nums[i] = f
+		}
+		lo, hi := math.Inf(-1), math.Inf(1)
+		if len(args) >= 2 {
+			lo = nums[1]
+		}
+		if len(args) == 3 {
+			hi = nums[2]
 		}
 		if lo > hi {
 			return Null(), rtErrf(at, "limit：下限 %g が上限 %g を超えています", lo, hi)
 		}
-		c := v
+		c := nums[0]
 		if c < lo {
 			c = lo
 		}
 		if c > hi {
 			c = hi
-		}
-		if args[0].K == KInt && args[1].K == KInt && args[2].K == KInt {
-			return Int(int64(c)), nil
 		}
 		return Float(c), nil
 	})

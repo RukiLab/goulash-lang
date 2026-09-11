@@ -107,6 +107,8 @@ func TestMath(t *testing.T) {
 	mustOutIO(t, "mes(abs(-5))\nmes(abs(5.5))\nmes(abs(0))\n", "", "5\n5.5\n0\n")
 	mustOutIO(t, "mes(sqrt(16))\nmes(sin(0))\nmes(cos(0))\nmes(pow(2, 10))\nmes(exp(0))\nmes(log(1))\n", "", "4\n0\n1\n1024\n1\n0\n")
 	mustOutIO(t, "mes(limit(5, 0, 10))\nmes(limit(-3, 0, 10))\nmes(limit(99, 0, 10))\nmes(limit(5.5, 0, 10))\n", "", "5\n0\n10\n5.5\n")
+	mustOutIO(t, "mes(limit(5))\nmes(limit(-3, 0))\nmes(limit(99, 0))\nmes(limit(5.5))\nmes(limit(-1.5, 0.5))\n", "", "5\n0\n99\n5.5\n0.5\n")
+	mustOutIO(t, "mes(vartype(limit(5)))\nmes(vartype(limit(5.0)))\nmes(vartype(limit(5, 0)))\n", "", "int\nfloat\nint\n")
 	mustOutIO(t, "mes(atan(0))\nmes(tan(0))\n", "", "0\n0\n")
 	mustErrIO(t, "mes(sqrt(-1))\n", "平方根")
 	mustErrIO(t, "mes(log(0))\n", "正の数")

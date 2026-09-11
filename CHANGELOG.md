@@ -28,6 +28,7 @@ Goulash 処理系の変更履歴です。v0.1 は未リリースのため、す�
 - `color(r, g, b [, a])`：α値（`0` 透明～`255` 不透明）に対応。GUI の文字・図形描画に適用（`galpha` とは乗算）。CUI の端末文字αは無視
 - VS Code 拡張に F5 実行を追加（`F5` = `gsh run`、`Ctrl+F5` = `--gui` 付き。`gsh` の PATH 登録が前提）
 - `#mode cli` / `#mode gui` 指示子：`gsh run` の実行モードをコード内で指定（`#include` 先も含めた有効行の最後が勝つ。REPL は常に CUI）
+- `limit(v [, lo [, hi]])`：`lo` / `hi` の省略に対応（省略側は型の最小値 / 最大値。`limit(v)` は恒等）
 
 ### 変更（破壊的）
 - コマンド名：`hsp-next` → `gou` → `gsh`。モジュールも `gsh`（`gsh/gui`）に統一。言語名 `Goulash` は維持
