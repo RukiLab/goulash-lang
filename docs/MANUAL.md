@@ -30,8 +30,8 @@
 
 主な特徴は以下のとおりです。
 
-* 同一ランタイムで CUI と GUI を切り替えられます。
-* 通常は CUI で動作し、`-tags gui` で GUI 機能を有効にできます。
+* 同一バイナリで CUI と GUI を切り替えられます。
+* `#mode`・`--gui` / `--cui` で実行モードを指定します（特別なビルドは不要です）。
 * ツリーウォーク型インタプリタで動作し、中間ファイルを生成しません。
 * `if` や `while` などの条件式では、厳密に `bool` 型を要求します。
 * 日本語テキストは rune 単位で扱い、日本語も 1 文字として数えます。
@@ -47,7 +47,7 @@
 
 Go 1.25 以上が必要です。
 
-## CUIビルド
+## ビルドとテスト
 
 ```sh
 cd goulash
@@ -56,21 +56,13 @@ go test ./...
 ```
 
 コマンド名 `gsh` のバイナリを作る場合は、出力名を指定します。
+単一バイナリで CUI / GUI の両方が動作します。
 
 ```sh
 go build -o gsh .          # Linux / macOS
 go build -o gsh.exe .      # Windows
 gsh run examples/hello.gsh
-```
-
-## GUIビルド
-
-GUI機能を使用する場合は、ビルドタグ `gui` を付けます。
-
-```sh
-go build -tags gui ./...
-go test -tags gui ./...
-go run -tags gui . run examples/gui_hello.gsh
+gsh run examples/gui_hello.gsh
 ```
 
 > `TestGuiRender` など一部のGUIテストは Ebiten の制約により、1プロセスにつき1回だけウィンドウを生成します。2回目以降は自動的にスキップされます。
@@ -138,9 +130,6 @@ gsh run main.gsh -- hello world
 - 省略時：`gui`（ウィンドウを開きます）
 - 複数ある場合：有効な行の最後が勝ちます（`#ifdef` の無効分岐内は無視、`#include` 先も対象）
 - `--gui` / `--cui` が指定された場合はそちらが優先されます
-
-GUI モードには `-tags gui` ビルドが必要です。CUI ビルドで GUI モードの
-スクリプトを実行すると、起動前にエラーになります。
 
 ## `gsh repl`
 
@@ -1335,7 +1324,7 @@ remove
 # 10.14 GUI・ウィンドウ
 
 > このグループはGUI機能を中心とした関数です。
-> GUI機能を使用するには `-tags gui` でビルドします（`#mode` 省略時は自動でウィンドウが開きます）。
+> 特別なビルドは不要です（`#mode` 省略時は自動でウィンドウが開きます）。
 
 | 関数                | 説明              | GUIでの挙動                | CUIでの挙動                     |
 | ----------------- | --------------- | ---------------------- | --------------------------- |
@@ -1768,19 +1757,12 @@ REPLでは入力ごとにプリプロセス状態が初期化されます。
 
 # GUIモード
 
-GUI機能を使用するには、
-
-```sh
-go build -tags gui ./...
-```
-
-でビルドし、
-
 ```sh
 gsh run program.gsh
 ```
 
 で実行します（`#mode` 省略時は GUI モードでウィンドウが開きます）。
+特別なビルドは不要で、単一バイナリが CUI / GUI の両方に対応します。
 
 GUIモードでは、主に以下の機能が利用できます。
 
@@ -1924,22 +1906,14 @@ Goulash は `ime(1)` 中の入力行カーソル位置を毎 tick 通知して�
 
 # テスト
 
-CUIテスト：
-
 ```sh
 go test ./...
-```
-
-GUIテスト：
-
-```sh
-go test -tags gui ./...
 ```
 
 人手検証テスト（実ウィンドウでの目視・操作確認）：
 
 ```sh
-go run -tags gui . run examples/human_check.gsh
+go run . run examples/human_check.gsh
 ```
 
 主要なテスト：

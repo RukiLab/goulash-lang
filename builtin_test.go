@@ -79,7 +79,7 @@ func TestBuiltinRegistryComplete(t *testing.T) {
 		}
 		delete(got, n)
 	}
-	// GUI-only words (builtin_gui.go, -tags gui) are valid extras.
+	// GUI words (builtin_gui*.go) are valid extras.
 	for _, n := range guiBuiltinNames {
 		delete(got, n)
 	}

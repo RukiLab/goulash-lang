@@ -1,5 +1,3 @@
-//go:build gui
-
 // Package gui implements the Ebiten WindowBackend (G0: window, text,
 // close handling). Drawing (G1), polling input/audio/dialog (G2) and
 // widgets (G3) extend this file set.

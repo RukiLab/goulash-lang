@@ -14,11 +14,7 @@ go build -o gsh.exe .      # Windows（コマンド名 gsh）
 go build -o gsh .          # Linux / macOS
 ```
 
-GUI 版はビルドタグ `gui` が必要です。
-
-```sh
-go build -tags gui -o gsh.exe .
-```
+単一バイナリで CUI / GUI の両方が動作します（特別なビルドは不要です）。
 
 ## 使い方
 
@@ -33,7 +29,7 @@ gsh parse <file.gsh>                   構文木を出力します（デバッ�
 
 ```sh
 gsh run examples/hello.gsh
-go run -tags gui . run examples/gui_hello.gsh --gui
+gsh run examples/gui_hello.gsh --gui
 ```
 
 ## サンプル
@@ -61,8 +57,7 @@ go run -tags gui . run examples/gui_hello.gsh --gui
 ## テスト
 
 ```sh
-go test ./...              # CUI テスト
-go test -tags gui ./...    # GUI テストを含めて実行
+go test ./...
 ```
 
 ## ドキュメント

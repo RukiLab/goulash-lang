@@ -1,8 +1,6 @@
-//go:build gui
-
-// GUI-only builtins (G5 form widgets: chkbox, combox, mesbox, objprm
-// plus the checked/getstr getters). Registered only in -tags gui builds;
-// console builds report these names as undefined functions.
+// GUI builtins (G5 form widgets: chkbox, combox, mesbox, objprm
+// plus the checked/getstr getters). Always registered; GUI calls need
+// a window (a GUI backend), otherwise they report an error.
 package main
 
 func init() {

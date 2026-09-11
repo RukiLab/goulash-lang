@@ -1,8 +1,6 @@
-//go:build gui
-
-// GUI-only builtins (G4 drawing extension: pngsave, paint, font).
-// Registered only in -tags gui builds; console builds report these
-// names as undefined functions.
+// GUI builtins (G4 drawing extension: pngsave, paint, font).
+// Always registered; GUI calls need a window (a GUI backend),
+// otherwise they report an error.
 package main
 
 func init() {

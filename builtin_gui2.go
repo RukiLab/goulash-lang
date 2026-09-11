@@ -1,6 +1,5 @@
-//go:build gui
-
-// GUI-only builtins (G2 input + audio). Registered only in -tags gui builds.
+// GUI builtins (G2 input + audio). Always registered; GUI calls need a
+// window (a GUI backend), otherwise they report an error.
 package main
 
 import (

@@ -1,7 +1,5 @@
-//go:build gui
-
-// GUI-only builtins (G1 drawing). Registered only in -tags gui builds;
-// console builds report these names as undefined functions.
+// GUI builtins (G1 drawing). Always registered; GUI calls need a
+// window (a GUI backend), otherwise they report an error.
 package main
 
 import (

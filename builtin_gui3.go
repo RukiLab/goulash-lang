@@ -1,6 +1,5 @@
-//go:build gui
-
-// GUI-only builtins (G3 widgets + dialog). Registered only in -tags gui.
+// GUI builtins (G3 widgets + dialog). Always registered; GUI calls need
+// a window (a GUI backend), otherwise they report an error.
 package main
 
 func init() {

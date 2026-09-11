@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"gsh/gui"
 )
 
 const usage = `gsh: Goulash v0.1 インタプリタ
@@ -28,13 +30,8 @@ const usage = `gsh: Goulash v0.1 インタプリタ
 
 実行モードはコード内の #mode cli/gui で指定します（省略時は gui で
 ウィンドウを開きます。--gui/--cui はコマンドラインからの強制指定で、
-#mode より優先されます）。GUI モードには -tags gui ビルドが必要です。
+#mode より優先されます）。
 --keep は将来の互換性のために予約されており、現在は何も行いません。`
-
-// GUI hooks, wired by guihook_gui.go under -tags gui.
-var newGUIBackend func(w, h int) (Backend, error)
-var runGUILoop func(be Backend, run func()) int
-var guiSetDone func(be Backend)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -131,37 +128,32 @@ func cmdRun(args []string) {
 	}
 }
 
-// runGUI executes prog in a window. It requires a -tags gui build.
+// runGUI executes prog in a window.
 func runGUI(file string, prog *Program, scriptArgs []string) {
 	_ = file
-	if newGUIBackend == nil || runGUILoop == nil {
-		fmt.Fprintln(os.Stderr, "エラー: GUI モードには GUI ビルドが必要です（go run -tags gui . run "+file+"）。CUI で実行するには #mode cli を指定してください")
-		os.Exit(2)
-	}
-	be, err := newGUIBackend(640, 480)
+	wb, err := gui.New(640, 480)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "エラー:", err)
 		os.Exit(1)
 	}
-	in := NewInterpWithBackend(be, os.Stdin)
+	in := NewInterpWithBackend(wb, os.Stdin)
 	in.SetArgs(scriptArgs)
 	// The script runs on its own goroutine (see RunLoop) while the game
 	// loop owns this one, so the result travels over a channel. Buffered
 	// so a script finishing after an early window close never blocks.
-	// A closed window with a still-running script reads as no error,
-	// exactly like the previous racy load of a nil runErr.
+	// A closed window with a still-running script reads as no error.
 	runCh := make(chan error, 1)
-	loopCode := runGUILoop(be, func() {
+	loopCode := gui.RunLoop(wb, func() {
 		runErr := in.Run(prog)
 		if runErr != nil {
 			// Report immediately (verifiable even if the window is killed)
 			// and also inside the window, which stays open for inspection.
 			fmt.Fprintln(os.Stderr, "エラー:", runErr)
-			be.SetColor(255, 90, 90, 255)
-			be.Println("エラー: " + runErr.Error())
-			be.ResetColor()
+			wb.SetColor(255, 90, 90, 255)
+			wb.Println("エラー: " + runErr.Error())
+			wb.ResetColor()
 		} else {
-			guiSetDone(be)
+			wb.SetDone()
 		}
 		runCh <- runErr
 	})

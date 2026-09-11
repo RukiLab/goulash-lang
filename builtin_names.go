@@ -1,8 +1,7 @@
 package main
 
-// guiBuiltinNames lists builtins registered only in -tags gui builds.
-// Referenced by TestBuiltinRegistryComplete so the same test passes
-// in both configurations.
+// guiBuiltinNames lists the GUI-related builtins (always registered).
+// Referenced by TestBuiltinRegistryComplete.
 var guiBuiltinNames = []string{
 	"screen", "gsel",
 	"pset", "line", "boxf", "circle",
