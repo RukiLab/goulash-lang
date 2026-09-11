@@ -5,7 +5,7 @@
 // out-params become return values, predicates return bool, failures are
 // runtime errors.
 //
-// GUI-only words live in builtin_gui*.go under the gui tag (G1-G5):
+// GUI words live in builtin_gui*.go (G1-G5):
 // screen, gsel, pset, line, boxf, circle, gcopy, gmode,
 // picload, pngsave, paint, font,
 // getkey, mousex, mousey, clicked,
@@ -23,13 +23,15 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"gsh/gui"
 )
 
 // Backend abstracts input/output so a future GUI backend can be swapped in.
 // ConsoleBackend implements it with ANSI sequences + stdio.
 type Backend interface {
-	Print(s string)
-	Println(s string)
+	Print(s string, style gui.TextStyle)
+	Println(s string, style gui.TextStyle)
 	Out() io.Writer
 	ReadLine(prompt string) (line string, ok bool)
 	Clear()
@@ -66,8 +68,33 @@ func NewConsoleBackend(out io.Writer, in io.Reader) *ConsoleBackend {
 	return &ConsoleBackend{out: out, in: bufio.NewReader(in)}
 }
 
-func (b *ConsoleBackend) Print(s string)   { fmt.Fprint(b.out, s) }
-func (b *ConsoleBackend) Println(s string) { fmt.Fprintln(b.out, s) }
+func (b *ConsoleBackend) Print(s string, style gui.TextStyle) {
+	fmt.Fprint(b.out, styledCUI(s, style))
+}
+func (b *ConsoleBackend) Println(s string, style gui.TextStyle) {
+	fmt.Fprint(b.out, styledCUI(s, style)+"\n")
+}
+
+// styledCUI wraps s in SGR style codes, switching the style back off
+// afterwards without touching the persistent text color (22/23/24
+// clear intensity/italic/underline only). Style 0 is byte-identical
+// to the old plain output.
+func styledCUI(s string, style gui.TextStyle) string {
+	if style == 0 {
+		return s
+	}
+	codes := ""
+	if style&gui.StyleBold != 0 {
+		codes += "\x1b[1m"
+	}
+	if style&gui.StyleItalic != 0 {
+		codes += "\x1b[3m"
+	}
+	if style&gui.StyleUnderline != 0 {
+		codes += "\x1b[4m"
+	}
+	return codes + s + "\x1b[22;23;24m"
+}
 
 // Out exposes the raw output stream (for exec passthrough).
 func (b *ConsoleBackend) Out() io.Writer { return b.out }
@@ -226,14 +253,39 @@ func needArray(name string, args []Value, i int, at Pos) (*Array, error) {
 	return args[i].Arr, nil
 }
 
+// splitStyleArgs consumes trailing mes()/print() style keywords
+// ("bold", "italic", "bolditalic", "underline"; exact match) and
+// returns the remaining args plus the combined style. Ordinary words
+// (including non-strings) always stay printable.
+func splitStyleArgs(args []Value) ([]Value, gui.TextStyle) {
+	var st gui.TextStyle
+	n := len(args)
+	for n > 0 {
+		a := args[n-1]
+		if a.K != KString {
+			break
+		}
+		s, ok := gui.ParseTextStyle(a.S)
+		if !ok {
+			break
+		}
+		st |= s
+		n--
+	}
+	return args[:n], st
+}
+
 // mes is the basic output function (variadic, space-joined + newline).
+// Trailing style keywords ("bold", "italic", "bolditalic", "underline")
+// are consumed as decoration instead of printed.
 func init() {
 	register("mes", 0, -1, func(in *Interp, args []Value, at Pos) (Value, error) {
-		parts := make([]string, len(args))
-		for i, a := range args {
+		rest, st := splitStyleArgs(args)
+		parts := make([]string, len(rest))
+		for i, a := range rest {
 			parts[i] = Stringify(a)
 		}
-		in.be.Println(strings.Join(parts, " "))
+		in.be.Println(strings.Join(parts, " "), st)
 		return Null(), nil
 	})
 }

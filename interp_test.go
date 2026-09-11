@@ -285,6 +285,14 @@ func TestMes(t *testing.T) {
 	mustOut(t, "x = 1\ny = 2\nmes(\"x =\", x, \"y =\", y)\n", "x = 1 y = 2\n")
 	mustOut(t, "mes()\n", "\n")
 	mustOut(t, "mes([1, [2, 3]])\n", "[1, [2, 3]]\n")
+	// Trailing style keywords are consumed as decoration (CUI: SGR).
+	mustOut(t, "mes(\"hi\", \"bold\")\n", "\x1b[1mhi\x1b[22;23;24m\n")
+	mustOut(t, "mes(\"a\", \"b\", \"italic\", \"underline\")\n", "\x1b[3m\x1b[4ma b\x1b[22;23;24m\n")
+	mustOut(t, "mes(\"t\", \"bold\", \"italic\")\n", "\x1b[1m\x1b[3mt\x1b[22;23;24m\n")
+	mustOut(t, "mes(\"bold\")\n", "\x1b[1m\x1b[22;23;24m\n")
+	// Exact match only: other words and non-strings stay printable.
+	mustOut(t, "mes(\"a\", \"Bold\")\n", "a Bold\n")
+	mustOut(t, "mes(\"a\", 1)\n", "a 1\n")
 }
 
 func TestMapDot(t *testing.T) {

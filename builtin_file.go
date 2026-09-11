@@ -54,7 +54,7 @@ func init() {
 		if err != nil {
 			return Null(), err
 		}
-		_, err = os.Stat(p)
+		_, err = os.Stat(in.resolvePath(p))
 		if err == nil {
 			return Bool(true), nil
 		}
@@ -102,7 +102,7 @@ func init() {
 		if err != nil {
 			return Null(), err
 		}
-		if err := os.Remove(p); err != nil {
+		if err := os.Remove(in.resolvePath(p)); err != nil {
 			return Null(), rtErrf(at, "delete：%s", err.Error())
 		}
 		return Null(), nil
@@ -114,7 +114,7 @@ func init() {
 		if err != nil {
 			return Null(), err
 		}
-		if err := os.Mkdir(p, 0o777); err != nil {
+		if err := os.Mkdir(in.resolvePath(p), 0o777); err != nil {
 			return Null(), rtErrf(at, "mkdir：%s", err.Error())
 		}
 		return Null(), nil
@@ -126,7 +126,7 @@ func init() {
 		if err != nil {
 			return Null(), err
 		}
-		if err := os.Chdir(p); err != nil {
+		if err := os.Chdir(in.resolvePath(p)); err != nil {
 			return Null(), rtErrf(at, "chdir：%s", err.Error())
 		}
 		return Null(), nil
@@ -142,11 +142,11 @@ func init() {
 		if err != nil {
 			return Null(), err
 		}
-		data, err := os.ReadFile(src)
+		data, err := os.ReadFile(in.resolvePath(src))
 		if err != nil {
 			return Null(), rtErrf(at, "bcopy：%s", err.Error())
 		}
-		if err := os.WriteFile(dst, data, 0o666); err != nil {
+		if err := os.WriteFile(in.resolvePath(dst), data, 0o666); err != nil {
 			return Null(), rtErrf(at, "bcopy：%s", err.Error())
 		}
 		return Null(), nil
@@ -158,7 +158,7 @@ func init() {
 		if err != nil {
 			return Null(), err
 		}
-		data, err := os.ReadFile(p)
+		data, err := os.ReadFile(in.resolvePath(p))
 		if err != nil {
 			return Null(), rtErrf(at, "bload：%s", err.Error())
 		}
@@ -198,7 +198,7 @@ func init() {
 			}
 			data = data[:size]
 		}
-		if err := os.WriteFile(p, data, 0o666); err != nil {
+		if err := os.WriteFile(in.resolvePath(p), data, 0o666); err != nil {
 			return Null(), rtErrf(at, "bsave：%s", err.Error())
 		}
 		return Null(), nil
@@ -280,7 +280,7 @@ func init() {
 		if err != nil {
 			return Null(), err
 		}
-		data, err := os.ReadFile(p)
+		data, err := os.ReadFile(in.resolvePath(p))
 		if err != nil {
 			return Null(), rtErrf(at, "noteload：%s", err.Error())
 		}
@@ -297,7 +297,7 @@ func init() {
 		if err != nil {
 			return Null(), err
 		}
-		if err := os.WriteFile(p, []byte(s), 0o666); err != nil {
+		if err := os.WriteFile(in.resolvePath(p), []byte(s), 0o666); err != nil {
 			return Null(), rtErrf(at, "notesave：%s", err.Error())
 		}
 		return Null(), nil

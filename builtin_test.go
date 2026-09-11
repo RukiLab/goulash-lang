@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"gsh/gui"
 )
 
 // runIO executes src with given stdin, capturing stdout and logmes output.
@@ -359,14 +361,106 @@ func TestConsoleIO(t *testing.T) {
 	mustOutIO(t, "pos(-1, 0)\n", "", "\x1b[1;0H")
 	mustOutIO(t, "pos(-5, -3)\n", "", "\x1b[-2;-4H")
 	mustOutIO(t, "title(\"T\")\n", "", "\x1b]0;T\x07")
+	mustErrIO(t, "title(\"a\\0b\")\n", "NUL")
+	mustOutIO(t, "print(\"x\", \"bold\")\nprint(\"y\")\n", "", "\x1b[1mx\x1b[22;23;24my")
 	mustErrIO(t, "color(1, 2)\n", "0 個、3 個または 4 個")
 	mustErrIO(t, "color(300, 0, 0)\n", "0 から 255")
+}
+
+func TestSplitStyleArgs(t *testing.T) {
+	rest, st := splitStyleArgs([]Value{Str("a"), Str("b"), Str("bold"), Str("underline")})
+	if len(rest) != 2 || st != gui.StyleBold|gui.StyleUnderline {
+		t.Fatalf("got %v, %v", rest, st)
+	}
+	rest, st = splitStyleArgs([]Value{Str("bolditalic")})
+	if len(rest) != 0 || st != gui.StyleBold|gui.StyleItalic {
+		t.Fatalf("got %v, %v", rest, st)
+	}
+	// A trailing keyword is consumed even after non-strings; the
+	// non-string itself stays printable. Near-misses stay printable.
+	rest, st = splitStyleArgs([]Value{Str("a"), Int(1), Str("bold")})
+	if len(rest) != 2 || st != gui.StyleBold {
+		t.Fatalf("got %v, %v", rest, st)
+	}
+	rest, st = splitStyleArgs([]Value{Str("a"), Str("Bold")})
+	if len(rest) != 2 || st != 0 {
+		t.Fatalf("got %v, %v", rest, st)
+	}
 }
 
 func TestInput(t *testing.T) {
 	mustOutIO(t, "s = input()\nmes(s)\n", "hello\n", "hello\n")
 	mustOutIO(t, "s = input(\"name? \")\nmes(s)\n", "bob\n", "name? bob\n")
 	mustOutIO(t, "mes(input())\n", "", "null\n") // EOF
+}
+
+// runScriptDir runs src with the working directory and script directory
+// given, returning captured stdout.
+func runScriptDir(t *testing.T, src, cwd, scriptDir string) string {
+	t.Helper()
+	prog, err := Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(old); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	var out bytes.Buffer
+	in := NewInterpWithIO(&out, strings.NewReader(""))
+	in.SetScriptDir(scriptDir)
+	if err := in.Run(prog); err != nil {
+		t.Fatalf("src %q: %v", src, err)
+	}
+	return out.String()
+}
+
+func TestScriptDirResolution(t *testing.T) {
+	dirA := t.TempDir() // script home
+	dirB := t.TempDir() // working directory
+	write := func(dir, name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o666); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(dirA, "data.txt", "from-a")
+	write(dirB, "data.txt", "from-b")
+	write(dirB, "only-b.txt", "b")
+
+	// Script dir wins over the working directory.
+	if got := runScriptDir(t, "mes(noteload(\"data.txt\"))\n", dirB, dirA); got != "from-a\n" {
+		t.Fatalf("script-dir first: got %q", got)
+	}
+	// Working directory is the fallback.
+	if got := runScriptDir(t, "mes(noteload(\"only-b.txt\"))\n", dirB, dirA); got != "b\n" {
+		t.Fatalf("cwd fallback: got %q", got)
+	}
+	// Absolute paths pass through untouched.
+	abs := filepath.ToSlash(filepath.Join(dirB, "data.txt"))
+	if got := runScriptDir(t, fmt.Sprintf("mes(noteload(%q))\n", abs), dirB, dirA); got != "from-b\n" {
+		t.Fatalf("absolute: got %q", got)
+	}
+	// New files land beside the script, not in the working directory.
+	runScriptDir(t, "notesave(\"new.txt\", \"hi\")\n", dirB, dirA)
+	if _, err := os.Stat(filepath.Join(dirA, "new.txt")); err != nil {
+		t.Fatalf("save beside script: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dirB, "new.txt")); !os.IsNotExist(err) {
+		t.Fatalf("save must not land in cwd: %v", err)
+	}
+	// No script dir (REPL): today's working-directory behavior.
+	if got := runScriptDir(t, "mes(noteload(\"only-b.txt\"))\n", dirB, ""); got != "b\n" {
+		t.Fatalf("repl cwd: got %q", got)
+	}
 }
 
 func TestFiles(t *testing.T) {

@@ -140,6 +140,11 @@ func init() {
 		if target == "" {
 			return Null(), argErr("open", 0, at, "対象を空にすることはできません")
 		}
+		// URLs pass through untouched; file paths resolve against the
+		// script directory like every other file builtin.
+		if !strings.Contains(target, "://") {
+			target = in.resolvePath(target)
+		}
 		var cmd *exec.Cmd
 		switch runtime.GOOS {
 		case "windows":
@@ -240,7 +245,7 @@ func init() {
 		if err != nil {
 			return Null(), err
 		}
-		if err := os.WriteFile(path, body, 0o666); err != nil {
+		if err := os.WriteFile(in.resolvePath(path), body, 0o666); err != nil {
 			return Null(), rtErrf(at, "httpget：%s", err.Error())
 		}
 		return Int(int64(len(body))), nil
@@ -275,7 +280,7 @@ func init() {
 			if err != nil {
 				return Null(), err
 			}
-			if err := os.WriteFile(path, body, 0o666); err != nil {
+			if err := os.WriteFile(in.resolvePath(path), body, 0o666); err != nil {
 				return Null(), rtErrf(at, "httppost：%s", err.Error())
 			}
 			return Int(int64(len(body))), nil

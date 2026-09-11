@@ -325,7 +325,7 @@ func init() {
 		if err != nil {
 			return Null(), err
 		}
-		id, err := wb.MmLoad(p)
+		id, err := wb.MmLoad(in.resolvePath(p))
 		if err != nil {
 			return Null(), rtErrf(at, "%s", err.Error())
 		}

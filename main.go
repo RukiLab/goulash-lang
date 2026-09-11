@@ -16,6 +16,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gsh/gui"
@@ -120,6 +121,7 @@ func cmdRun(args []string) {
 	}
 	in := NewInterp(os.Stdout)
 	in.SetArgs(scriptArgs)
+	in.SetScriptDir(scriptDirOf(file))
 	if err := in.Run(prog); err != nil {
 		fmt.Fprintln(os.Stderr, "エラー:", err)
 		os.Exit(1)
@@ -127,6 +129,17 @@ func cmdRun(args []string) {
 	if code, ok := in.ExitCode(); ok {
 		os.Exit(code)
 	}
+}
+
+// scriptDirOf returns the absolute directory containing file (""
+// when it cannot be determined); file builtins resolve relative
+// paths there.
+func scriptDirOf(file string) string {
+	abs, err := filepath.Abs(file)
+	if err != nil {
+		return ""
+	}
+	return filepath.Dir(abs)
 }
 
 // enginePanicMsg renders a recovered engine (Ebiten) panic as one clean
@@ -153,6 +166,7 @@ func runGUI(file string, prog *Program, scriptArgs []string) {
 	}
 	in := NewInterpWithBackend(wb, os.Stdin)
 	in.SetArgs(scriptArgs)
+	in.SetScriptDir(scriptDirOf(file))
 	// The script runs on its own goroutine (see RunLoop) while the game
 	// loop owns this one, so the result travels over a channel. Buffered
 	// so a script finishing after an early window close never blocks.

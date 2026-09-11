@@ -350,8 +350,8 @@ func TestSetFontFileHeadless(t *testing.T) {
 
 func TestPrintlnState(t *testing.T) {
 	b := mustNew(t)
-	b.Println("Hello")
-	b.Println("World")
+	b.Println("Hello", 0)
+	b.Println("World", 0)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if len(b.segs) != 2 {
@@ -362,6 +362,32 @@ func TestPrintlnState(t *testing.T) {
 	}
 	if b.curY != 2 {
 		t.Fatalf("curY = %d, want 2", b.curY)
+	}
+}
+
+func TestPrintStyles(t *testing.T) {
+	b := mustNew(t)
+	b.Println("a", StyleBold)
+	b.Print("b", StyleItalic)
+	// Style change mid-line flushes the partial: "b" keeps italic.
+	b.Println("c", 0)
+	// Same-style print() accumulates one partial.
+	b.Print("x", StyleBold)
+	b.Print("y", StyleBold)
+	b.Println("z", StyleBold)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.segs) != 4 {
+		t.Fatalf("segs: %+v", b.segs)
+	}
+	if b.segs[0].st != StyleBold || b.segs[1].st != StyleItalic || b.segs[2].st != 0 {
+		t.Fatalf("styles: %+v", b.segs)
+	}
+	if b.segs[0].s != "a" || b.segs[1].s != "b" || b.segs[2].s != "c" {
+		t.Fatalf("texts: %+v", b.segs)
+	}
+	if b.segs[3].s != "xyz" || b.segs[3].st != StyleBold {
+		t.Fatalf("segs[3]: %+v", b.segs[3])
 	}
 }
 
@@ -1407,7 +1433,7 @@ func TestFontDrawSmoke(t *testing.T) {
 	if err := b.SetFontSize(32); err != nil {
 		t.Fatal(err)
 	}
-	b.Println("Hello, GUI! あいうえお")
+	b.Println("Hello, GUI! あいうえお", 0)
 	b.Draw(ebiten.NewImage(640, 480))
 }
 
@@ -1836,7 +1862,7 @@ func TestGuiRender(t *testing.T) {
 	}
 	loopRan = true
 	b := mustNew(t)
-	b.Println("Hello, GUI! あいうえお")
+	b.Println("Hello, GUI! あいうえお", 0)
 	ebiten.SetWindowSize(640, 480)
 	ebiten.SetWindowTitle("Goulash test")
 	g := &renderGame{b: b, face: b.face, savePath: filepath.Join(t.TempDir(), "snap.png")}

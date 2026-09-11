@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 )
@@ -102,6 +103,9 @@ type Interp struct {
 	// after the run; atomic so a GUI window closed mid-script cannot race.
 	exitCode atomic.Pointer[int]
 	cliArgs  []string
+	// Directory of the running script file ("" in the REPL): base
+	// for relative paths in file builtins.
+	scriptDir string
 }
 
 // NewInterp creates an interpreter writing output to out and reading input
@@ -125,6 +129,61 @@ func NewInterpWithBackend(be Backend, in io.Reader) *Interp {
 // SetArgs stores command-line arguments for args() (used by run).
 func (in *Interp) SetArgs(args []string) {
 	in.cliArgs = args
+}
+
+// SetScriptDir records the directory of the running script file (used
+// by run; empty in the REPL). File builtins resolve relative paths
+// against it first, then the working directory.
+func (in *Interp) SetScriptDir(dir string) {
+	in.scriptDir = dir
+}
+
+// lookupPath resolves p against the script directory, then the working
+// directory, returning the first existing match ("" when none, or for
+// empty input). Absolute paths check existence directly.
+func (in *Interp) lookupPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	if filepath.IsAbs(p) {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+		return ""
+	}
+	cands := []string{}
+	if in.scriptDir != "" {
+		cands = append(cands, filepath.Join(in.scriptDir, p))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		cands = append(cands, filepath.Join(cwd, p))
+	}
+	seen := map[string]bool{}
+	for _, q := range cands {
+		if seen[q] {
+			continue
+		}
+		seen[q] = true
+		if _, err := os.Stat(q); err == nil {
+			return q
+		}
+	}
+	return ""
+}
+
+// resolvePath maps a builtin path argument: absolute paths pass
+// through; relative paths prefer the script directory, then the
+// working directory (same order as #include). Missing paths resolve
+// against the script directory so new files land beside the script
+// (in the REPL they stay as-given, i.e. working-directory relative).
+func (in *Interp) resolvePath(p string) string {
+	if q := in.lookupPath(p); q != "" {
+		return q
+	}
+	if p == "" || filepath.IsAbs(p) || in.scriptDir == "" {
+		return p
+	}
+	return filepath.Join(in.scriptDir, p)
 }
 
 // ExitCode reports the code requested by end(), if any.

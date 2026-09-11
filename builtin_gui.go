@@ -235,7 +235,7 @@ func init() {
 		if err != nil {
 			return Null(), err
 		}
-		id, err := wb.PicLoad(p)
+		id, err := wb.PicLoad(in.resolvePath(p))
 		if err != nil {
 			return Null(), rtErrf(at, "%s", err.Error())
 		}

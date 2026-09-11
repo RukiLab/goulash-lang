@@ -15,19 +15,50 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/exp/textinput"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
+	"github.com/hajimehoshi/ebiten/v2/vector"
 )
 
 const (
 	fontSize   = 16.0
 	lineHeight = 20.0
 	charWidth  = 8.0
+	// italicShear slants faux-italic glyphs (~11 degrees).
+	italicShear = 0.2
 )
+
+// TextStyle is a bitmask of faux text decorations for mes()/print().
+// Styles deform the single loaded face (no variant files needed):
+// bold over-strikes, italic shears, underline rules below the baseline.
+type TextStyle int
+
+const (
+	StyleBold TextStyle = 1 << iota
+	StyleItalic
+	StyleUnderline
+)
+
+// ParseTextStyle maps a mes()/print() trailing keyword to a style flag.
+// Exact lowercase match only, so ordinary words never vanish from output.
+func ParseTextStyle(s string) (TextStyle, bool) {
+	switch s {
+	case "bold":
+		return StyleBold, true
+	case "italic":
+		return StyleItalic, true
+	case "bolditalic":
+		return StyleBold | StyleItalic, true
+	case "underline":
+		return StyleUnderline, true
+	}
+	return 0, false
+}
 
 // textSeg is one laid-out text fragment.
 type textSeg struct {
 	x, y int // character-cell origin
 	s    string
 	fg   color.NRGBA
+	st   TextStyle
 }
 
 // WindowBackend is a Backend rendering into an Ebiten window.
@@ -41,6 +72,7 @@ type WindowBackend struct {
 	partial string // unflushed print() text
 	partX   int    // cell x where partial started
 	partFg  color.NRGBA
+	partSt  TextStyle // style at partial start
 	curX    int
 	curY    int
 	gx, gy  int // pixel cursor for graphics (gcopy destination)
@@ -230,13 +262,26 @@ func (b *WindowBackend) Draw(screen *ebiten.Image) {
 	b.mu.Lock()
 	segs := make([]textSeg, len(b.segs))
 	copy(segs, b.segs)
-	partial, partX, partFg := b.partial, b.partX, b.partFg
+	partial, partX, partFg, partSt := b.partial, b.partX, b.partFg, b.partSt
 	curY := b.curY
 	face := b.face
 	charW, lineH := b.charW, b.lineH
+	fontSize := b.fontSize
 	ascent := face.Metrics().HAscent
+	descent := face.Metrics().HDescent
 	b.mu.Unlock()
 
+	// Faux-style tuning (single face deformed): bold over-strikes with a
+	// size-scaled shift, italic shears ~11 degrees, underline rules below
+	// the baseline.
+	boldDx := 1.0
+	underThick := float32(1)
+	if fontSize >= 40 {
+		boldDx = 2
+	}
+	if fontSize >= 32 {
+		underThick = 2
+	}
 	rows := int(float64(b.h) / lineH)
 	// Vertical scroll: drop lines above the visible window.
 	minY := 0
@@ -244,23 +289,42 @@ func (b *WindowBackend) Draw(screen *ebiten.Image) {
 	if maxY-minY >= rows {
 		minY = maxY - rows + 1
 	}
-	drawText := func(cx int, cy int, s string, fg color.NRGBA) {
+	drawText := func(cx int, cy int, s string, fg color.NRGBA, st TextStyle) {
 		if cy < minY || s == "" {
 			return
 		}
-		op := &text.DrawOptions{}
-		// text/v2 draws from the baseline, so shift down by the ascent.
-		op.GeoM.Translate(float64(cx)*charW, float64(cy-minY)*lineH+ascent)
-		// ColorScale zero value is transparent; reset to identity first.
-		op.ColorScale.Reset()
-		op.ColorScale.ScaleWithColor(fg)
-		text.Draw(screen, s, face, op)
+		baseX := float64(cx) * charW
+		baseY := float64(cy-minY)*lineH + ascent
+		italic := st&StyleItalic != 0
+		draw := func(dx float64) {
+			op := &text.DrawOptions{}
+			// text/v2 draws from the baseline, so shift down by the ascent.
+			op.GeoM.Translate(baseX+dx, baseY)
+			if italic {
+				// Element (0,1) is b in x' = a*x + b*y + tx:
+				// slant glyphs right around the pen point.
+				op.GeoM.SetElement(0, 1, italicShear)
+			}
+			// ColorScale zero value is transparent; reset to identity first.
+			op.ColorScale.Reset()
+			op.ColorScale.ScaleWithColor(fg)
+			text.Draw(screen, s, face, op)
+		}
+		draw(0)
+		if st&StyleBold != 0 {
+			draw(boldDx)
+		}
+		if st&StyleUnderline != 0 {
+			w, _ := text.Measure(s, face, lineH)
+			y := float32(baseY + descent*0.5)
+			vector.StrokeLine(screen, float32(baseX), y, float32(baseX+w), y, underThick, fg, false)
+		}
 	}
 	for _, sg := range segs {
-		drawText(sg.x, sg.y, sg.s, sg.fg)
+		drawText(sg.x, sg.y, sg.s, sg.fg, sg.st)
 	}
 	if partial != "" {
-		drawText(partX, curY, partial, partFg)
+		drawText(partX, curY, partial, partFg, partSt)
 	}
 	if b.ui != nil {
 		// Root fills the window; relocate on resize.

@@ -15,6 +15,7 @@ func init() {
 		if err != nil {
 			return Null(), err
 		}
+		p = in.resolvePath(p)
 		id := int64(wb.CurrentSel())
 		if len(args) == 2 {
 			id, err = needInt("pngsave", args, 1, at)
@@ -82,6 +83,11 @@ func init() {
 		spec, err := needString("font", args, 0, at)
 		if err != nil {
 			return Null(), err
+		}
+		// A sibling font file wins over the system directories, but a
+		// bare name must keep falling through to them.
+		if q := in.lookupPath(spec); q != "" {
+			spec = q
 		}
 		size := 0
 		if len(args) == 2 {

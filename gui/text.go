@@ -19,33 +19,33 @@ func (b *WindowBackend) Out() io.Writer {
 }
 
 // Print appends text without a newline.
-func (b *WindowBackend) Print(s string) {
+func (b *WindowBackend) Print(s string, st TextStyle) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.partial == "" {
-		b.partX = b.curX
-		b.partFg = b.fg
-	}
-	b.partial += s
-	b.curX += len([]rune(s))
+	b.printLocked(s, st)
 }
 
 // Println appends text with a trailing newline.
-func (b *WindowBackend) Println(s string) {
+func (b *WindowBackend) Println(s string, st TextStyle) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	firstFg := b.fg
+	// A style change mid-line flushes the partial first, so fragments
+	// keep their own styles on the same line.
+	if b.partial != "" && b.partSt != st {
+		b.flushPartialLocked()
+	}
+	firstFg, firstSt := b.fg, st
 	if b.partial != "" {
-		firstFg = b.partFg
+		firstFg, firstSt = b.partFg, b.partSt
 	}
 	full := b.partial + s
 	b.partial = ""
 	lines := strings.Split(full, "\n")
 	// First chunk completes the partial line.
-	b.segs = append(b.segs, textSeg{x: b.partX, y: b.curY, s: lines[0], fg: firstFg})
+	b.segs = append(b.segs, textSeg{x: b.partX, y: b.curY, s: lines[0], fg: firstFg, st: firstSt})
 	for _, ln := range lines[1:] {
 		b.curY++
-		b.segs = append(b.segs, textSeg{x: 0, y: b.curY, s: ln, fg: b.fg})
+		b.segs = append(b.segs, textSeg{x: 0, y: b.curY, s: ln, fg: b.fg, st: st})
 	}
 	// Bound memory for chatty scripts; Draw only shows the tail anyway.
 	if len(b.segs) > 10000 {
@@ -53,6 +53,32 @@ func (b *WindowBackend) Println(s string) {
 	}
 	b.curX = 0
 	b.curY++
+}
+
+// printLocked appends to the partial line, flushing first when the style
+// changes so mixed-style print() calls keep per-fragment styles.
+func (b *WindowBackend) printLocked(s string, st TextStyle) {
+	if b.partial == "" {
+		b.partX = b.curX
+		b.partFg = b.fg
+		b.partSt = st
+	} else if b.partSt != st {
+		b.flushPartialLocked()
+		b.partX = b.curX
+		b.partFg = b.fg
+		b.partSt = st
+	}
+	b.partial += s
+	b.curX += len([]rune(s))
+}
+
+// flushPartialLocked moves the partial line into segs without advancing.
+func (b *WindowBackend) flushPartialLocked() {
+	if b.partial == "" {
+		return
+	}
+	b.segs = append(b.segs, textSeg{x: b.partX, y: b.curY, s: b.partial, fg: b.partFg, st: b.partSt})
+	b.partial = ""
 }
 
 // ReadLine is a Backend-interface stub: the GUI has no blocking line

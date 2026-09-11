@@ -4,10 +4,13 @@ package main
 import "strings"
 
 func init() {
-	// print(args...): mes without the trailing newline.
+	// print(args...): mes without the trailing newline. Trailing
+	// style keywords ("bold", "italic", "bolditalic", "underline")
+	// are consumed as decoration instead of printed.
 	register("print", 0, -1, func(in *Interp, args []Value, at Pos) (Value, error) {
-		parts := make([]string, len(args))
-		for i, a := range args {
+		rest, st := splitStyleArgs(args)
+		parts := make([]string, len(rest))
+		for i, a := range rest {
 			parts[i] = Stringify(a)
 		}
 		out := ""
@@ -17,7 +20,7 @@ func init() {
 			}
 			out += p
 		}
-		in.be.Print(out)
+		in.be.Print(out, st)
 		return Null(), nil
 	})
 
