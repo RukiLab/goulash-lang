@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync/atomic"
 )
 
 // Decisions (v0.1):
@@ -93,11 +94,13 @@ func (e *Env) Assign(name string, v Value, at Pos) error {
 
 // Interp holds global state shared across statements (and REPL inputs).
 type Interp struct {
-	globals  *Env
-	be       Backend
-	in       io.Reader
-	errOut   io.Writer
-	exitCode *int
+	globals *Env
+	be      Backend
+	in      io.Reader
+	errOut  io.Writer
+	// Written by end() on the script goroutine, read by the frontend
+	// after the run; atomic so a GUI window closed mid-script cannot race.
+	exitCode atomic.Pointer[int]
 	cliArgs  []string
 }
 
@@ -126,10 +129,10 @@ func (in *Interp) SetArgs(args []string) {
 
 // ExitCode reports the code requested by end(), if any.
 func (in *Interp) ExitCode() (int, bool) {
-	if in.exitCode == nil {
-		return 0, false
+	if p := in.exitCode.Load(); p != nil {
+		return *p, true
 	}
-	return *in.exitCode, true
+	return 0, false
 }
 
 // Backend exposes the IO backend (used by gui-tag builtins).

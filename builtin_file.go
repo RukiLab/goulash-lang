@@ -191,7 +191,9 @@ func init() {
 			if err != nil {
 				return Null(), err
 			}
-			if size < 0 || int(size) > len(data) {
+			// Compare in int64: int(size) can wrap on huge size and
+			// skip the check, panicking the slice below.
+			if size < 0 || size > int64(len(data)) {
 				return Null(), argErr("bsave", 2, at, "サイズが範囲外です（配列の長さ %d）", len(data))
 			}
 			data = data[:size]

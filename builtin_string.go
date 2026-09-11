@@ -50,7 +50,9 @@ func init() {
 			return Null(), argErr("strmid", 1, at, "start %d は範囲外です（長さ %d）", args[1].I, len(r))
 		}
 		end := start + count
-		if end > int64(len(r)) {
+		// end < start means start+count wrapped on huge count;
+		// clamp like any other over-length end.
+		if end > int64(len(r)) || end < start {
 			end = int64(len(r))
 		}
 		return Str(string(r[start:end])), nil

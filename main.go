@@ -145,9 +145,14 @@ func runGUI(file string, prog *Program, scriptArgs []string) {
 	}
 	in := NewInterpWithBackend(be, os.Stdin)
 	in.SetArgs(scriptArgs)
-	var runErr error
+	// The script runs on its own goroutine (see RunLoop) while the game
+	// loop owns this one, so the result travels over a channel. Buffered
+	// so a script finishing after an early window close never blocks.
+	// A closed window with a still-running script reads as no error,
+	// exactly like the previous racy load of a nil runErr.
+	runCh := make(chan error, 1)
 	loopCode := runGUILoop(be, func() {
-		runErr = in.Run(prog)
+		runErr := in.Run(prog)
 		if runErr != nil {
 			// Report immediately (verifiable even if the window is killed)
 			// and also inside the window, which stays open for inspection.
@@ -158,7 +163,13 @@ func runGUI(file string, prog *Program, scriptArgs []string) {
 		} else {
 			guiSetDone(be)
 		}
+		runCh <- runErr
 	})
+	var runErr error
+	select {
+	case runErr = <-runCh:
+	default:
+	}
 	if runErr != nil {
 		os.Exit(1)
 	}

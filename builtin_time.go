@@ -94,7 +94,7 @@ func init() {
 			}
 		}
 		c := int(code)
-		in.exitCode = &c
+		in.exitCode.Store(&c)
 		// A GUI backend closes its window on end(); console just unwinds.
 		if closer, ok := in.be.(interface{ RequestClose() }); ok {
 			closer.RequestClose()

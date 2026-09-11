@@ -139,6 +139,9 @@ func TestRandom(t *testing.T) {
 func TestBuiltinStrings(t *testing.T) {
 	mustOutIO(t, "mes(strlen(\"hello\"))\nmes(strlen(\"あいう\"))\nmes(strlen(\"\"))\n", "", "5\n3\n0\n")
 	mustOutIO(t, "mes(strmid(\"abcdef\", 1, 3))\nmes(strmid(\"あいうえお\", 1, 2))\nmes(strmid(\"abcdef\", -2, 2))\nmes(strmid(\"abc\", 1, 99))\n", "", "bcd\nいう\nef\nbc\n")
+	// A huge count clamps like any over-length end (start+count wraps,
+	// which used to panic the slice instead of clamping).
+	mustOutIO(t, "mes(strmid(\"abc\", 1, 9223372036854775807))\n", "", "bc\n")
 	mustOutIO(t, "mes(instr(\"hello\", \"ll\"))\nmes(instr(\"hello\", 3, \"l\"))\nmes(instr(\"hello\", \"z\"))\nmes(instr(\"hello\", 99, \"h\"))\n", "", "2\n3\n-1\n-1\n")
 	mustOutIO(t, "mes(\"[\" + strtrim(\"  hi  \") + \"]\")\nmes(strtrim(\"xxhiix\", \"x\"))\nmes(strtrim(\"xxhi\", \"x\", 1))\nmes(strtrim(\"hixx\", \"x\", 2))\n", "", "[hi]\nhii\nhi\nhi\n")
 	mustOutIO(t, "a = split(\"a,b,c\", \",\")\nmes(a[1])\nmes(length(a))\n", "", "b\n3\n")
@@ -178,6 +181,40 @@ func TestSleepEndAssertLogmes(t *testing.T) {
 	}
 	if code, ok := in.ExitCode(); !ok || code != 3 {
 		t.Fatalf("exit code: %d, %v", code, ok)
+	}
+	// The GUI frontend reads ExitCode() after the loop while the script
+	// goroutine may still run; concurrent access must be race-free
+	// (meaningful under -race).
+	prog, err := Parse("n = 0\nwhile n < 10000 {\nn = n + 1\n}\nend(3)\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conc := NewInterpWithIO(&bytes.Buffer{}, strings.NewReader(""))
+	done := make(chan error, 1)
+	go func() { done <- conc.Run(prog) }()
+	var runErr error
+	gotDone := false
+	for {
+		if _, ok := conc.ExitCode(); ok {
+			break
+		}
+		select {
+		case runErr = <-done:
+			gotDone = true
+		default:
+		}
+		if gotDone {
+			break
+		}
+	}
+	if !gotDone {
+		runErr = <-done
+	}
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	if code, ok := conc.ExitCode(); !ok || code != 3 {
+		t.Fatalf("concurrent exit code: %d, %v", code, ok)
 	}
 	mustOutIO(t, "assert(true)\nassert(1 < 2, \"math broke\")\nmes(\"ok\")\n", "", "ok\n")
 	mustErrIO(t, "assert(false)\n", "assertion failed")
@@ -341,6 +378,11 @@ func TestFiles(t *testing.T) {
 	mustOutIO(t, "bsave(\""+join("b.bin")+"\", [65, 66, 67])\na = bload(\""+join("b.bin")+"\")\nmes(a)\nmes(length(a))\nbsave(\""+join("c.bin")+"\", [1, 2, 3], 2)\nmes(length(bload(\""+join("c.bin")+"\")))\n", "",
 		"[65, 66, 67]\n3\n2\n")
 	mustErrIO(t, "bsave(\""+join("x.bin")+"\", [256])\n", "0 から 255")
+	// A huge size is a range error, never a Go panic, and writes nothing.
+	mustErrIO(t, "bsave(\""+join("y.bin")+"\", [1, 2, 3], 9223372036854775807)\n", "サイズが範囲外")
+	if _, err := os.Stat(filepath.Join(dir, "y.bin")); !os.IsNotExist(err) {
+		t.Fatalf("bsave with huge size must not create the file: %v", err)
+	}
 	mustErrIO(t, "mes(bload(\""+join("missing.bin")+"\"))\n", "bload：")
 
 	// mkdir/delete/bcopy.
@@ -386,6 +428,12 @@ func TestPeekPoke(t *testing.T) {
 	mustErrIO(t, "poke([0], 0, 256)\n", "0 から 255")
 	mustErrIO(t, "mes(peek([\"x\"], 0))\n", "バイト")
 	mustErrIO(t, "mes(lpeek([1, 2], 0))\n", "範囲外")
+	// Huge indexes must be range errors, never a Go panic (int(i)+n
+	// wraps on MaxInt64 and used to skip the bounds check).
+	mustErrIO(t, "mes(peek([1], 9223372036854775807))\n", "範囲外")
+	mustErrIO(t, "mes(wpeek([1, 2], 9223372036854775807))\n", "範囲外")
+	mustErrIO(t, "mes(lpeek([1, 2, 3, 4], 9223372036854775804))\n", "範囲外")
+	mustErrIO(t, "poke([0], 9223372036854775807, 1)\n", "範囲外")
 }
 
 func TestPushPopJoin(t *testing.T) {
@@ -413,6 +461,10 @@ func TestArrayExtras(t *testing.T) {
 	mustErrIO(t, "sort([1, \"a\"])\n", "すべて整数かすべて文字列")
 	mustErrIO(t, "insert([1], 5, 2)\n", "範囲外")
 	mustErrIO(t, "remove([1], 0, 2)\n", "範囲外")
+	// Huge index/count must be range errors, never a Go panic.
+	mustErrIO(t, "insert([1], 9223372036854775807, 2)\n", "範囲外")
+	mustErrIO(t, "remove([1, 2], 9223372036854775807, 1)\n", "範囲外")
+	mustErrIO(t, "remove([1, 2], 0, 9223372036854775807)\n", "範囲外")
 	mustErrIO(t, "slice([1, 2], 2, 1)\n", "範囲外")
 	mustErrIO(t, "sort(1)\n", "配列である必要があります")
 }

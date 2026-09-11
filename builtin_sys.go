@@ -152,6 +152,8 @@ func init() {
 		if err := cmd.Start(); err != nil {
 			return Null(), rtErrf(at, "open：%s", err.Error())
 		}
+		// Reap in the background (same as exec); the call stays async.
+		go func() { _ = cmd.Wait() }()
 		return Null(), nil
 	})
 

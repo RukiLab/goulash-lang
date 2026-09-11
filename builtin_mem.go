@@ -76,7 +76,8 @@ func peekArgs(name string, args []Value, at Pos, n int) (*Array, int, error) {
 	if err != nil {
 		return nil, 0, err
 	}
-	if i < 0 || int(i)+n > len(arr.Elems) {
+	// Compare in int64: int(i)+n can wrap on huge i and skip the check.
+	if i < 0 || i > int64(len(arr.Elems))-int64(n) {
 		return nil, 0, argErr(name, 1, at, "バイト %d から %d は範囲外です（長さ %d）", i, i+int64(n)-1, len(arr.Elems))
 	}
 	for k := 0; k < n; k++ {
@@ -106,7 +107,8 @@ func pokeArgs(name string, args []Value, at Pos, n int) (*Array, int, int64, err
 	if v < 0 || v > max {
 		return nil, 0, 0, argErr(name, 2, at, "値は 0 から %d の範囲で指定してください。%d が指定されました", max, v)
 	}
-	if i < 0 || int(i)+n > len(arr.Elems) {
+	// Compare in int64: int(i)+n can wrap on huge i and skip the check.
+	if i < 0 || i > int64(len(arr.Elems))-int64(n) {
 		return nil, 0, 0, argErr(name, 1, at, "バイト %d から %d は範囲外です（長さ %d）", i, i+int64(n)-1, len(arr.Elems))
 	}
 	return arr, int(i), v, nil

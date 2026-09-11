@@ -124,7 +124,8 @@ func init() {
 		if err != nil {
 			return Null(), err
 		}
-		if i < 0 || int(i) > len(arr.Elems) {
+		// Compare in int64: int(i) can wrap on huge i and skip the check.
+		if i < 0 || i > int64(len(arr.Elems)) {
 			return Null(), argErr("insert", 1, at, "添字 %d は範囲外です（長さ %d）", i, len(arr.Elems))
 		}
 		arr.Elems = append(arr.Elems[:int(i):int(i)], append(append([]Value{}, args[2:]...), arr.Elems[int(i):]...)...)
@@ -149,7 +150,9 @@ func init() {
 				return Null(), err
 			}
 		}
-		if i < 0 || count < 0 || int(i)+int(count) > len(arr.Elems) {
+		// Compare in int64: i+count can wrap on huge values and skip
+		// the check. Splitting keeps both comparisons overflow-free.
+		if i < 0 || count < 0 || i > int64(len(arr.Elems)) || count > int64(len(arr.Elems))-i {
 			return Null(), argErr("remove", 1, at, "範囲 %d から %d は範囲外です（長さ %d）", i, i+count, len(arr.Elems))
 		}
 		out := append([]Value(nil), arr.Elems[int(i):int(i)+int(count)]...)
