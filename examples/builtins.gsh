@@ -20,8 +20,8 @@ mes("pi=" + str(3.14159))
 mes("abs=" + str(abs(-7)) + " sqrt=" + str(sqrt(2)))
 mes("clamp=" + str(limit(99, 0, 10)))
 
-mes("path base=" + getpath("C:\\work\\app.gsh", 9))
-mes("path ext=" + getpath("C:\\work\\app.gsh", 2))
+mes("path base=" + getpath("C:\\work\\app.gsh", "base"))
+mes("path ext=" + getpath("C:\\work\\app.gsh", "ext"))
 mes("year=" + str(gettime(0)) + " month=" + str(gettime(1)))
 
 t = "one\ntwo\nthree"

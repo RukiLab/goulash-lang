@@ -160,9 +160,14 @@ func TestBuiltinStrings(t *testing.T) {
 }
 
 func TestGetpath(t *testing.T) {
-	mustOutIO(t, "p = \"C:\\\\a\\\\b.exe\"\nmes(getpath(p, 0))\nmes(getpath(p, 1))\nmes(getpath(p, 2))\nmes(getpath(p, 8))\nmes(getpath(p, 9))\nmes(getpath(p, 32))\nmes(getpath(p, 16))\n", "",
+	mustOutIO(t, "p = \"C:\\\\a\\\\b.exe\"\nmes(getpath(p))\nmes(getpath(p, \"dir\", \"base\"))\nmes(getpath(p, \"ext\"))\nmes(getpath(p, \"file\"))\nmes(getpath(p, \"base\"))\nmes(getpath(p, \"dir\"))\nmes(getpath(p, \"lower\"))\n", "",
 		"C:\\a\\b.exe\nC:\\a\\b\n.exe\nb.exe\nb\nC:\\a\\\nc:\\a\\b.exe\n")
-	mustOutIO(t, "mes(getpath(\"/x/y.txt\", 8))\nmes(getpath(\"/x/y.txt\", 32))\n", "", "y.txt\n/x/\n")
+	mustOutIO(t, "mes(getpath(\"/x/y.txt\", \"file\"))\nmes(getpath(\"/x/y.txt\", \"dir\"))\n", "", "y.txt\n/x/\n")
+	// Composition: dir+file, base+ext (= file), dir lowercased.
+	mustOutIO(t, "mes(getpath(\"/x/y.txt\", \"dir\", \"file\"))\nmes(getpath(\"/x/y.txt\", \"base\", \"ext\"))\nmes(getpath(\"/X/Y.TXT\", \"dir\", \"lower\"))\n", "", "/x/y.txt\ny.txt\n/x/\n")
+	mustErrIO(t, "mes(getpath(\"a\", \"bogus\"))\n", "dir/file/base/ext/lower")
+	mustErrIO(t, "mes(getpath(\"a\", \"file\", \"base\"))\n", "同時に指定できません")
+	mustErrIO(t, "mes(getpath(\"a\", 8))\n", "文字列である必要があります")
 }
 
 func TestGettimeRanges(t *testing.T) {

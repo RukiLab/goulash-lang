@@ -224,14 +224,38 @@ func init() {
 	// getpath(path, mode): path decomposition. Modes follow HSP and combine
 	// with addition: 0 copy, 1 strip extension, 2 extension only (with dot),
 	// 8 strip directory, 16 lowercase, 32 directory only.
-	register("getpath", 2, 2, func(in *Interp, args []Value, at Pos) (Value, error) {
+	register("getpath", 1, -1, func(in *Interp, args []Value, at Pos) (Value, error) {
 		p, err := needString("getpath", args, 0, at)
 		if err != nil {
 			return Null(), err
 		}
-		mode, err := needInt("getpath", args, 1, at)
-		if err != nil {
-			return Null(), err
+		// Parts compose: "dir" + "base" is dir/base, "lower" lowercases
+		// whatever was selected. No parts selects the full path.
+		// ("file" already carries the extension, so "file" + "base"
+		// together is contradictory and rejected.)
+		var dirSel, fileSel, baseSel, extSel, lower bool
+		for i := range args[1:] {
+			s, err := needString("getpath", args, i+1, at)
+			if err != nil {
+				return Null(), err
+			}
+			switch s {
+			case "dir":
+				dirSel = true
+			case "file":
+				fileSel = true
+			case "base":
+				baseSel = true
+			case "ext":
+				extSel = true
+			case "lower":
+				lower = true
+			default:
+				return Null(), argErr("getpath", i+1, at, "parts は dir/file/base/ext/lower のいずれかである必要があります。%q が指定されました", s)
+			}
+		}
+		if fileSel && baseSel {
+			return Null(), argErr("getpath", 0, at, "file と base は同時に指定できません")
 		}
 		// Normalize separators for decomposition, then restore style.
 		win := strings.Contains(p, "\\")
@@ -240,25 +264,21 @@ func init() {
 		ext := filepath.Ext(file)
 		base := strings.TrimSuffix(file, ext)
 		out := p
-		if mode&1 != 0 {
-			out = joinDir(dir, base)
-		}
-		if mode&2 != 0 {
-			// Extension only. When combined with 8/32 the HSP result is
-			// still just the extension; keep it simple and HSP-like.
-			out = ext
-		}
-		if mode&8 != 0 && mode&2 == 0 {
-			if mode&1 != 0 {
-				out = base
-			} else {
-				out = file
+		if dirSel || fileSel || baseSel || extSel {
+			out = ""
+			if dirSel {
+				out += dir
+			}
+			if fileSel {
+				out += file
+			} else if baseSel {
+				out += base
+			}
+			if extSel && !fileSel {
+				out += ext
 			}
 		}
-		if mode&32 != 0 {
-			out = dir
-		}
-		if mode&16 != 0 {
+		if lower {
 			out = strings.ToLower(out)
 		}
 		if win {
@@ -294,13 +314,4 @@ func init() {
 		}
 		return Str(string(rune(c))), nil
 	})
-}
-
-// joinDir rejoins a slash-style dir with a file part, keeping the caller's
-// separator flavor (backslash when the original had any).
-func joinDir(dir, file string) string {
-	if dir == "" {
-		return file
-	}
-	return dir + file
 }
