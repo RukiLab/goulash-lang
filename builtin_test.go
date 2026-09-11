@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -57,7 +58,7 @@ func TestBuiltinRegistryComplete(t *testing.T) {
 		"strlen", "strmid", "instr", "strtrim", "split", "strf", "getpath",
 		"gettime", "sleep", "await", "tick", "nanotime", "end", "assert", "throw", "logmes", "exec", "args",
 		"getenv", "setenv", "open", "clipboard_get", "clipboard_set",
-		"dlgopen", "dlgsave", "httpget",
+		"dlgopen", "dlgsave", "httpget", "httppost",
 		"exist", "dirlist", "delete", "mkdir", "chdir", "bcopy", "bload", "bsave",
 		"getcwd", "direxe", "homedir", "tmpdir",
 		"notemax", "noteget", "noteadd", "notedel", "noteload", "notesave",
@@ -109,6 +110,12 @@ func TestMath(t *testing.T) {
 	mustOutIO(t, "mes(limit(5, 0, 10))\nmes(limit(-3, 0, 10))\nmes(limit(99, 0, 10))\nmes(limit(5.5, 0, 10))\n", "", "5\n0\n10\n5.5\n")
 	mustOutIO(t, "mes(limit(5))\nmes(limit(-3, 0))\nmes(limit(99, 0))\nmes(limit(5.5))\nmes(limit(-1.5, 0.5))\n", "", "5\n0\n99\n5.5\n0.5\n")
 	mustOutIO(t, "mes(vartype(limit(5)))\nmes(vartype(limit(5.0)))\nmes(vartype(limit(5, 0)))\n", "", "int\nfloat\nint\n")
+	// Elided middle argument (,,) is null, which limit reads as default.
+	mustOutIO(t, "mes(limit(5, , 10))\nmes(limit(99, , 10))\nmes(limit(-3, , -5))\nmes(limit(5, 0, ))\n", "", "5\n10\n-5\n5\n")
+	mustOutIO(t, "mes(vartype(limit(5, , 10)))\nmes(limit(5.5, , 10.5))\n", "", "int\n5.5\n")
+	mustErrIO(t, "mes(limit(, 0, 10))\n", "数値である必要があります")
+	// Elision is null everywhere else (strict builtins reject it).
+	mustOutIO(t, "mes(,)\n", "", "null\n")
 	mustOutIO(t, "mes(atan(0))\nmes(tan(0))\n", "", "0\n0\n")
 	mustErrIO(t, "mes(sqrt(-1))\n", "平方根")
 	mustErrIO(t, "mes(log(0))\n", "正の数")
@@ -238,6 +245,32 @@ func TestHttpget(t *testing.T) {
 	}
 	// Unreachable host is an error, not a hang (client timeout).
 	mustErrIO(t, "mes(httpget(\"http://127.0.0.1:1/nope\"))\n", "httpget")
+}
+
+func TestHttppost(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			http.Error(w, "want POST", http.StatusMethodNotAllowed)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		fmt.Fprintf(w, "%s|%s", r.Header.Get("Content-Type"), body)
+	}))
+	defer srv.Close()
+	// Default content type is application/json.
+	mustOutIO(t, fmt.Sprintf("mes(httppost(%q, %q))\n", srv.URL, `{"a":1}`), "", "application/json|{\"a\":1}\n")
+	// Explicit content type.
+	mustOutIO(t, fmt.Sprintf("mes(httppost(%q, %q, %q))\n", srv.URL, "x=1", "application/x-www-form-urlencoded"), "", "application/x-www-form-urlencoded|x=1\n")
+	// Save form writes the body and returns its size.
+	dir := t.TempDir()
+	out := filepath.ToSlash(filepath.Join(dir, "post.txt"))
+	mustOutIO(t, fmt.Sprintf("mes(httppost(%q, %q, %q, %q))\n", srv.URL, "hi", "text/plain", out), "", "13\n")
+	data, err := os.ReadFile(filepath.Join(dir, "post.txt"))
+	if err != nil || string(data) != "text/plain|hi" {
+		t.Fatalf("saved body = %q, %v", data, err)
+	}
+	mustErrIO(t, "mes(httppost(1, \"x\"))\n", "文字列である必要があります")
+	mustErrIO(t, "mes(httppost(\"http://127.0.0.1:1/nope\", \"x\"))\n", "httppost")
 }
 
 func TestExec(t *testing.T) {

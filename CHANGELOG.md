@@ -29,6 +29,8 @@ Goulash 処理系の変更履歴です。v0.1 は未リリースのため、す�
 - VS Code 拡張に F5 実行を追加（`F5` = `gsh run`、`Ctrl+F5` = `--gui` 付き。`gsh` の PATH 登録が前提）
 - `#mode cli` / `#mode gui` 指示子：`gsh run` の実行モードをコード内で指定（`#include` 先も含めた有効行の最後が勝つ。REPL は常に CUI）
 - `limit(v [, lo [, hi]])`：`lo` / `hi` の省略に対応（省略側は型の最小値 / 最大値。`limit(v)` は恒等）
+- 引数の途中省略 `,,`：`null` と等価（`limit(v, , hi)` のように省略位置に既定値を持つ関数用。末尾カンマは無視）
+- `httppost(url, body [, contentType [, path]])`：`httpget` の逆方向。`contentType` 既定 `application/json`、2xx以外・16MB超・10秒超過はエラー
 
 ### 変更（破壊的）
 - コマンド名：`hsp-next` → `gou` → `gsh`。モジュールも `gsh`（`gsh/gui`）に統一。言語名 `Goulash` は維持

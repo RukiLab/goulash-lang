@@ -25,6 +25,41 @@ func mustFailParse(t *testing.T, src string, substr string) {
 	}
 }
 
+func TestElidedCallArgs(t *testing.T) {
+	callOf := func(src string) *CallExpr {
+		t.Helper()
+		prog := mustParse(t, src)
+		es, ok := prog.Stmts[0].(*ExprStmt)
+		if !ok {
+			t.Fatalf("%q: want ExprStmt, got %T", src, prog.Stmts[0])
+		}
+		c, ok := es.X.(*CallExpr)
+		if !ok {
+			t.Fatalf("%q: want CallExpr, got %T", src, es.X)
+		}
+		return c
+	}
+	// Middle elision is a null placeholder.
+	c := callOf("f(1, , 3)\n")
+	if len(c.Args) != 3 {
+		t.Fatalf("f(1, , 3): got %d args", len(c.Args))
+	}
+	if _, ok := c.Args[1].(*NullLit); !ok {
+		t.Fatalf("middle arg = %T, want *NullLit", c.Args[1])
+	}
+	// Leading elision and trailing commas.
+	c = callOf("f(, 2)\n")
+	if len(c.Args) != 2 {
+		t.Fatalf("f(, 2): got %d args", len(c.Args))
+	}
+	if _, ok := c.Args[0].(*NullLit); !ok {
+		t.Fatalf("first arg = %T, want *NullLit", c.Args[0])
+	}
+	if c = callOf("f(1,)\n"); len(c.Args) != 1 {
+		t.Fatalf("f(1,): got %d args, want 1", len(c.Args))
+	}
+}
+
 func TestParsePrecedence(t *testing.T) {
 	prog := mustParse(t, "x = 10 + 2 * 3\n")
 	as := prog.Stmts[0].(*AssignStmt)

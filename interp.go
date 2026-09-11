@@ -681,6 +681,8 @@ func (in *Interp) evalExpr(x Expr, env *Env) (Value, error) {
 		return Str(n.Value), nil
 	case *BoolLit:
 		return Bool(n.Value), nil
+	case *NullLit:
+		return Null(), nil
 	case *VarExpr:
 		v, ok := env.Lookup(n.Name)
 		if !ok {

@@ -311,6 +311,16 @@ func (n *BoolLit) String() string {
 	return "false"
 }
 
+// NullLit is the null value. It has no literal syntax; the parser
+// emits it for elided call arguments (f(a, , b)).
+type NullLit struct {
+	At Pos
+}
+
+func (n *NullLit) Pos() Pos       { return n.At }
+func (n *NullLit) exprNode()      {}
+func (n *NullLit) String() string { return "null" }
+
 type VarExpr struct {
 	Name string
 	At   Pos

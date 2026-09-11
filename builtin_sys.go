@@ -34,6 +34,21 @@ func httpFetch(url string) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	return drainResp(resp)
+}
+
+// httpPost sends body to url with shared limits.
+func httpPost(url, body, contentType string) ([]byte, error) {
+	resp, err := httpClient.Post(url, contentType, strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	return drainResp(resp)
+}
+
+// drainResp checks the status and reads a capped body.
+func drainResp(resp *http.Response) ([]byte, error) {
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, fmt.Errorf("status %s", resp.Status)
 	}
@@ -227,6 +242,43 @@ func init() {
 			return Null(), rtErrf(at, "httpget：%s", err.Error())
 		}
 		return Int(int64(len(body))), nil
+	})
+
+	// httppost(url, body [, contentType [, path]]): POST with the same
+	// 10s timeout and 16MB cap as httpget. contentType defaults to
+	// application/json. Returns the response body as a string; with
+	// path the body is saved and the byte count is returned.
+	register("httppost", 2, 4, func(in *Interp, args []Value, at Pos) (Value, error) {
+		url, err := needString("httppost", args, 0, at)
+		if err != nil {
+			return Null(), err
+		}
+		reqBody, err := needString("httppost", args, 1, at)
+		if err != nil {
+			return Null(), err
+		}
+		contentType := "application/json"
+		if len(args) >= 3 {
+			contentType, err = needString("httppost", args, 2, at)
+			if err != nil {
+				return Null(), err
+			}
+		}
+		body, err := httpPost(url, reqBody, contentType)
+		if err != nil {
+			return Null(), rtErrf(at, "httppost：%s", err.Error())
+		}
+		if len(args) == 4 {
+			path, err := needString("httppost", args, 3, at)
+			if err != nil {
+				return Null(), err
+			}
+			if err := os.WriteFile(path, body, 0o666); err != nil {
+				return Null(), rtErrf(at, "httppost：%s", err.Error())
+			}
+			return Int(int64(len(body))), nil
+		}
+		return Str(string(body)), nil
 	})
 
 	// setenv(name, value): set for this process (and children via exec).

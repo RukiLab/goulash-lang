@@ -151,12 +151,18 @@ func init() {
 	})
 
 	// limit(v [, lo [, hi]]): clamp into range. Omitted lo/hi are
-	// the type minimum/maximum (so limit(v) is identity). All-int
-	// inputs clamp in int64 and yield int; otherwise float64.
+	// the type minimum/maximum (so limit(v) is identity); an elided
+	// argument (limit(v, , hi)) is null, which also means default.
+	// All-int-or-null inputs clamp in int64 and yield int; otherwise
+	// float64.
 	register("limit", 1, 3, func(in *Interp, args []Value, at Pos) (Value, error) {
+		// v itself has no default (elided v is an error).
+		if _, err := needFloat("limit", args, 0, at); err != nil {
+			return Null(), err
+		}
 		intPath := true
 		for _, a := range args {
-			if a.K != KInt {
+			if a.K != KInt && a.K != KNull {
 				intPath = false
 				break
 			}
@@ -164,10 +170,10 @@ func init() {
 		if intPath {
 			lo := int64(math.MinInt64)
 			hi := int64(math.MaxInt64)
-			if len(args) >= 2 {
+			if len(args) >= 2 && args[1].K == KInt {
 				lo = args[1].I
 			}
-			if len(args) == 3 {
+			if len(args) == 3 && args[2].K == KInt {
 				hi = args[2].I
 			}
 			if lo > hi {
@@ -184,6 +190,9 @@ func init() {
 		}
 		nums := make([]float64, len(args))
 		for i := range args {
+			if args[i].K == KNull {
+				continue // default below
+			}
 			f, err := needFloat("limit", args, i, at)
 			if err != nil {
 				return Null(), err
@@ -191,10 +200,10 @@ func init() {
 			nums[i] = f
 		}
 		lo, hi := math.Inf(-1), math.Inf(1)
-		if len(args) >= 2 {
+		if len(args) >= 2 && args[1].K != KNull {
 			lo = nums[1]
 		}
-		if len(args) == 3 {
+		if len(args) == 3 && args[2].K != KNull {
 			hi = nums[2]
 		}
 		if lo > hi {

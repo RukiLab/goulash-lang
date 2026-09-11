@@ -786,6 +786,16 @@ func (p *parser) parsePostfix(litOK bool) (Expr, error) {
 			if p.peek().Type != TokRParen {
 				for {
 					p.skipNewlines()
+					if p.peek().Type == TokComma {
+						// Elided argument (,,): null placeholder,
+						// so f(a, , b) passes null in the middle.
+						c := p.next()
+						args = append(args, &NullLit{At: posOf(c)})
+						continue
+					}
+					if p.peek().Type == TokRParen {
+						break // trailing comma: f(a,) is f(a)
+					}
 					a, err := p.parseOr(true)
 					if err != nil {
 						return nil, err
