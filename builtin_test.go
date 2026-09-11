@@ -69,7 +69,7 @@ func TestBuiltinRegistryComplete(t *testing.T) {
 		"sort", "reverse", "insert", "remove", "slice", "find",
 		"keys", "has", "del",
 		"replace", "upper", "lower", "asc", "chr",
-		"lextokens", "strwidth", "pipeexec",
+		"lextokens", "strwidth", "parsetree", "pipeexec",
 	}
 	got := map[string]bool{}
 	for _, n := range builtinNames() {
@@ -592,6 +592,19 @@ func TestLexTokens(t *testing.T) {
 	mustOutIO(t, "t = lextokens(\"if x {\\n}\")\nmes(t[0].type)\nmes(t[2].type)\nmes(t[3].type)\n", "", "IF\nLBRACE\nNEWLINE\n")
 	mustErrIO(t, "lextokens(\"'a'\")\n", "シングルクォート")
 	mustErrIO(t, "lextokens(1)\n", "文字列である必要があります")
+}
+
+func TestParsetree(t *testing.T) {
+	mustOutIO(t, "t = parsetree(\"def f(a, b=1) {\\nreturn a\\n}\\nmes(f(2))\\n\")\nmes(t[\"type\"])\nmes(length(t[\"stmts\"]))\nmes(t[\"stmts\"][0][\"name\"])\nmes(t[\"stmts\"][0][\"params\"][1][\"default\"][\"value\"])\nmes(t[\"stmts\"][1][\"type\"])\nmes(t[\"stmts\"][0][\"line\"])\n", "",
+		"program\n2\nf\n1\ncall\n1\n")
+	// Operators use source symbols; expression statements unwrap.
+	mustOutIO(t, "t = parsetree(\"x = 1 + 2 * 3\\n\")\nmes(t[\"stmts\"][0][\"type\"])\nmes(t[\"stmts\"][0][\"value\"][\"op\"])\nmes(t[\"stmts\"][0][\"value\"][\"right\"][\"type\"])\n", "", "assign\n+\nbinary\n")
+	// Bare enums (pre-pass) surface with member positions and values.
+	mustOutIO(t, "t = parsetree(\"enum Color {\\nRed,\\nBlue = 5\\n}\\n\")\nmes(length(t[\"enums\"]))\nmes(t[\"enums\"][0][\"name\"])\nmes(t[\"enums\"][0][\"members\"][0][\"name\"])\nmes(t[\"enums\"][0][\"members\"][1][\"value\"])\nmes(t[\"enums\"][0][\"members\"][1][\"line\"])\n", "",
+		"1\nColor\nColor_Red\n5\n3\n")
+	mustOutIO(t, "mes(vartype(parsetree(\"x = 1\")))\n", "", "map\n")
+	mustErrIO(t, "parsetree(1)\n", "文字列である必要があります")
+	mustErrIO(t, "mes(parsetree(\"mes(\"))\n", "が必要です")
 }
 
 func TestStrWidth(t *testing.T) {

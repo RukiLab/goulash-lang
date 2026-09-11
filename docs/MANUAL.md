@@ -971,6 +971,7 @@ greet("Bob", "?")
 | `str(v)`                | 値を `mes` と同じ形式で文字列化します   | GUI / CUIとも文字列を返します    | GUI / CUIとも文字列を返します   |
 | `vartype(v)`            | 値の型名を返します                | GUI / CUIとも同じ文字列を返します  | GUI / CUIとも同じ文字列を返します |
 | `lextokens(src)`        | ソースを字句解析し `{type, text, line, col}` の配列を返します（自作エディタの強調表示・静的解析用） | GUI / CUIとも同じ配列を返します | GUI / CUIとも同じ配列を返します |
+| `parsetree(src)`        | ソースを構文解析し `{type, line, col, text, stmts, enums}` のmapを返します（アウトライン・移動・ホバー用。式文は式ノードに展開されます） | GUI / CUIとも同じmapを返します | GUI / CUIとも同じmapを返します |
 
 `strf()` の対応指定子：
 
@@ -982,6 +983,34 @@ greet("Bob", "?")
 %c
 %%
 ```
+
+### `parsetree`
+
+全ノードが `type` / `line` / `col` / `text`（正準ソース）を持ちます。文は `stmts` 配列、素の `enum` 宣言（プリパスで消費されるため）は位置付きで `enums` 配列に入ります。式文は式ノードに展開されます。
+
+| type | 追加キー |
+| ---- | ------- |
+| `program` | `stmts`, `enums` |
+| `assign` | `target`, `value` |
+| `if` | `cond`, `then[]`, `else[]`／`else if`ノード／`null` |
+| `while` | `cond`, `body[]` |
+| `repeat` | `count`, `var`（なしは`null`）, `item`（なしは`null`）, `body[]` |
+| `try` | `body[]`, `var`, `catch[]` |
+| `switch` | `value`, `cases[]`（`{values[], body[], default}`） |
+| `return` | `value`（なしは`null`） |
+| `def` | `name`, `params[]`（`{name, default}`、`default`なしは`null`）, `body[]` |
+| `break` / `continue` | なし |
+| `int` / `float` / `string` / `bool` | `value` |
+| `null` / `var`(`name`) | `null`はなし |
+| `array` | `elems[]` |
+| `map` | `fields[]`（`{key, value}`） |
+| `index` | `base`, `index` |
+| `field` | `base`, `field` |
+| `call` | `callee`, `args[]` |
+| `unary` / `binary` | `op`（ソース記号）, `x` ／ `left`, `right` |
+| `enum` | `name`（無名は`""`）, `members[]`（`{name, value, line, col}`） |
+
+生の `#` ディレクティブを含むソースは字句エラーになります（`lextokens` と同様）。構文エラーは実行時エラーです。
 
 ---
 

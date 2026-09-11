@@ -31,6 +31,7 @@ Goulash 処理系の変更履歴です。v0.1 は未リリースのため、す�
 - `limit(v [, lo [, hi]])`：`lo` / `hi` の省略に対応（省略側は型の最小値 / 最大値。`limit(v)` は恒等）
 - 引数の途中省略 `,,`：`null` と等価（`limit(v, , hi)` のように省略位置に既定値を持つ関数用。末尾カンマは無視）
 - `httppost(url, body [, contentType [, path]])`：`httpget` の逆方向。`contentType` 既定 `application/json`、2xx以外・16MB超・10秒超過はエラー
+- `parsetree(src)`：ソースの構文木取得（IDE向け。文・式ノード＋素enum一覧。`lextokens` の対）
 - `mes()` / `print()` の末尾装飾指定：`bold` / `italic` / `bolditalic` / `underline`（完全一致のみ消費。GUIはフォント変形描画、CUIはANSI）
 - ファイル組込の相対パス解決：スクリプト脇→カレントの順（`#include` と同じ規則。新規保存はスクリプト脇。`exec` / `pipeexec` のコマンド名は対象外）
 

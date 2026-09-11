@@ -13,12 +13,25 @@ package main
 import (
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // enumMember is one enum entry with its resolved integer literal.
 type enumEntry struct {
-	name string // fully prefixed
-	lit  string // decimal literal
+	name  string // fully prefixed
+	lit   string // decimal literal
+	value int64  // resolved value
+	line  int    // member identifier line
+	col   int    // member identifier column
+}
+
+// enumDeclInfo is one bare-enum declaration for tooling (parsetree):
+// the pre-pass drops declarations, so positions are captured here.
+type enumDeclInfo struct {
+	name    string // family prefix ("" = anonymous)
+	members []enumEntry
+	line    int // enum keyword line
+	col     int // enum keyword column
 }
 
 // expandEnums consumes bare-enum declarations and rewrites later uses
@@ -37,7 +50,7 @@ func expandEnums(toks []Token) ([]Token, error) {
 			continue
 		}
 		if stmtStart && t.Type == TokIdent && t.Lit == "enum" {
-			decl, next, err := matchEnumDecl(toks, i)
+			_, decl, next, err := matchEnumDecl(toks, i)
 			if err != nil {
 				return nil, err
 			}
@@ -67,20 +80,22 @@ func expandEnums(toks []Token) ([]Token, error) {
 }
 
 // matchEnumDecl parses a bare-enum declaration at toks[i] (IDENT
-// "enum"). It returns nil when the tokens are not enum-shaped, leaving
-// `enum` as an ordinary identifier (e.g. `enum = 5`). A statement-start
-// `enum` followed by an identifier that is not brace-opened is always
-// malformed, so it reports the enum syntax instead of a generic error.
-func matchEnumDecl(toks []Token, i int) ([]enumEntry, int, error) {
+// "enum"). It returns the family prefix ("" = anonymous), the members,
+// and the next index; nil members when the tokens are not enum-shaped,
+// leaving `enum` as an ordinary identifier (e.g. `enum = 5`).
+// A statement-start `enum` followed by an identifier that is not
+// brace-opened is always malformed, so it reports the enum syntax
+// instead of a generic error.
+func matchEnumDecl(toks []Token, i int) (string, []enumEntry, int, error) {
 	at := func(n int) Token {
 		if i+n >= len(toks) {
 			return Token{Type: TokEOF}
 		}
 		return toks[i+n]
 	}
-	bad := func() ([]enumEntry, int, error) {
+	bad := func() (string, []enumEntry, int, error) {
 		t := toks[i]
-		return nil, 0, &ParseError{File: t.File, Line: t.Line, Column: t.Column, Msg: "不正な enum です（enum [Name] { A [, B [= n]] ... } が必要です）"}
+		return "", nil, 0, &ParseError{File: t.File, Line: t.Line, Column: t.Column, Msg: "不正な enum です（enum [Name] { A [, B [= n]] ... } が必要です）"}
 	}
 	j := i + 1
 	prefix := ""
@@ -93,7 +108,7 @@ func matchEnumDecl(toks []Token, i int) ([]enumEntry, int, error) {
 	case at(1).Type == TokIdent:
 		return bad()
 	default:
-		return nil, 0, nil
+		return "", nil, 0, nil
 	}
 	// Newlines may appear anywhere inside the braces (the opening
 	// brace itself stays on the enum head line, Go-style).
@@ -115,6 +130,7 @@ func matchEnumDecl(toks []Token, i int) ([]enumEntry, int, error) {
 			return bad()
 		}
 		full := prefix + t.Lit
+		mline, mcol := t.Line, t.Column
 		j++
 		v := next
 		if at(j-i).Type == TokAssign {
@@ -138,7 +154,7 @@ func matchEnumDecl(toks []Token, i int) ([]enumEntry, int, error) {
 			v = n
 			j++
 		}
-		members = append(members, enumEntry{name: full, lit: strconv.FormatInt(v, 10)})
+		members = append(members, enumEntry{name: full, lit: strconv.FormatInt(v, 10), value: v, line: mline, col: mcol})
 		next = v + 1
 		skipNL()
 		switch at(j - i).Type {
@@ -147,7 +163,7 @@ func matchEnumDecl(toks []Token, i int) ([]enumEntry, int, error) {
 			skipNL()
 		case TokRBrace:
 			j++
-			return members, j, nil
+			return prefix, members, j, nil
 		default:
 			return bad()
 		}
@@ -155,13 +171,50 @@ func matchEnumDecl(toks []Token, i int) ([]enumEntry, int, error) {
 	if len(members) == 0 {
 		return bad()
 	}
-	return members, j, nil
+	return prefix, members, j, nil
 }
 
 // prevIsDot reports whether the last emitted token is a field dot, in
 // which case the identifier names a field and must not be rewritten.
 func prevIsDot(out []Token) bool {
 	return len(out) > 0 && out[len(out)-1].Type == TokDot
+}
+
+// scanEnumDecls collects bare-enum declarations from raw tokens for
+// tooling (parsetree). It mirrors expandEnums' walk so both agree on
+// what counts as a declaration; unlike the pre-pass it keeps positions.
+// Stops at the first malformed declaration (Parse reports it anyway).
+func scanEnumDecls(toks []Token) []enumDeclInfo {
+	var out []enumDeclInfo
+	stmtStart := true
+	i := 0
+	for i < len(toks) {
+		t := toks[i]
+		if t.Type == TokEOF {
+			i++
+			continue
+		}
+		if stmtStart && t.Type == TokIdent && t.Lit == "enum" {
+			prefix, decl, next, err := matchEnumDecl(toks, i)
+			if err != nil {
+				return out
+			}
+			if decl != nil {
+				out = append(out, enumDeclInfo{
+					name:    strings.TrimSuffix(prefix, "_"),
+					members: decl,
+					line:    t.Line,
+					col:     t.Column,
+				})
+				i = next
+				stmtStart = true
+				continue
+			}
+		}
+		i++
+		stmtStart = isEnumBoundary(t)
+	}
+	return out
 }
 
 // isEnumBoundary reports tokens after which a new statement may start.
