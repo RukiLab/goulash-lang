@@ -179,12 +179,11 @@ func runGUI(file string, prog *Program, scriptArgs []string) {
 				return in.Run(prog)
 			}()
 			if runErr != nil {
-				// Report immediately (verifiable even if the window is killed)
-				// and also inside the window, which stays open for inspection.
+				// Report to the terminal and terminate the process:
+				// unlike a clean finish (the window stays open), an
+				// error closes the window; the exit code below is 1.
 				fmt.Fprintln(os.Stderr, "エラー:", runErr)
-				wb.SetColor(255, 90, 90, 255)
-				wb.Println("エラー: " + runErr.Error())
-				wb.ResetColor()
+				wb.RequestClose()
 			} else {
 				wb.SetDone()
 			}
