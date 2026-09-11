@@ -3,6 +3,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os/exec"
 	"strings"
 	"time"
@@ -72,6 +73,11 @@ func init() {
 			}
 			if n < 0 {
 				return Null(), argErr("await", 0, at, "0 以上である必要があります。%d が指定されました", n)
+			}
+			// tick+n must stay representable: a wrapped target reads as
+			// already passed and used to return immediately.
+			if n > math.MaxInt64-in.be.Tick() {
+				return Null(), argErr("await", 0, at, "待機tick数が大きすぎます。%d が指定されました", n)
 			}
 		}
 		in.be.Await(n)

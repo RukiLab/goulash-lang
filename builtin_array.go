@@ -11,6 +11,11 @@ import (
 	"strings"
 )
 
+// maxDimTotal caps the total element count (product of sizes) for dim().
+// Without a cap, a huge size panics in make() instead of returning a
+// script error.
+const maxDimTotal = 1 << 20
+
 // makeDim builds nested zero-filled elements for dim().
 func makeDim(sizes []int) []Value {
 	elems := make([]Value, sizes[0])
@@ -31,6 +36,7 @@ func init() {
 	// One size makes a flat array; more sizes nest (dim(2, 3) is 2x3).
 	register("dim", 1, -1, func(in *Interp, args []Value, at Pos) (Value, error) {
 		sizes := make([]int, len(args))
+		total := int64(1)
 		for i, a := range args {
 			if a.K != KInt {
 				return Null(), rtErrf(at, "dim：要素数は整数である必要があります。%s が指定されました", typeNameOf(a))
@@ -38,6 +44,12 @@ func init() {
 			if a.I < 0 {
 				return Null(), rtErrf(at, "dim：要素数は 0 以上である必要があります。%d が指定されました", a.I)
 			}
+			// Division keeps the product check overflow-free; a zero
+			// size stays valid (dim(0) is an empty array).
+			if a.I != 0 && total > maxDimTotal/a.I {
+				return Null(), rtErrf(at, "dim：要素数が上限 %d を超えています", maxDimTotal)
+			}
+			total *= a.I
 			sizes[i] = int(a.I)
 		}
 		return ArrayOf(makeDim(sizes)), nil

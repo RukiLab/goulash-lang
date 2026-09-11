@@ -70,10 +70,15 @@ func init() {
 	})
 
 	// abs(v): absolute value, preserving int/float.
+	// abs(MinInt64) is an error: the negation wraps and has no
+	// representable absolute value.
 	register("abs", 1, 1, func(in *Interp, args []Value, at Pos) (Value, error) {
 		switch args[0].K {
 		case KInt:
 			if args[0].I < 0 {
+				if args[0].I == math.MinInt64 {
+					return Null(), argErr("abs", 0, at, "%d の絶対値を取得できません", args[0].I)
+				}
 				return Int(-args[0].I), nil
 			}
 			return args[0], nil

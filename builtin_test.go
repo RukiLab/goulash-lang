@@ -120,6 +120,11 @@ func TestMath(t *testing.T) {
 	mustErrIO(t, "mes(sqrt(-1))\n", "平方根")
 	mustErrIO(t, "mes(log(0))\n", "正の数")
 	mustErrIO(t, "mes(abs(\"x\"))\n", "数値である必要があります")
+	// abs(MinInt64) has no representable negation; it is an error,
+	// not a wrapped negative. (MinInt64 has no int literal; it is built
+	// here by wrapping subtraction, which is existing arithmetic behavior.)
+	mustErrIO(t, "m = -9223372036854775807 - 1\nmes(abs(m))\n", "絶対値を取得できません")
+	mustOutIO(t, "mes(abs(-9223372036854775807))\n", "", "9223372036854775807\n")
 	mustErrIO(t, "mes(limit(1, 9, 2))\n", "下限")
 }
 
@@ -174,6 +179,9 @@ func TestSleepEndAssertLogmes(t *testing.T) {
 	mustErrIO(t, "sleep(-1)\n", "0 以上")
 	mustOutIO(t, "await(0)\nawait()\nmes(tick() >= 0)\n", "", "true\n")
 	mustErrIO(t, "await(-1)\n", "0 以上")
+	// A wait whose target tick is unrepresentable is an error, not an
+	// immediate return via wrap.
+	mustErrIO(t, "await(9223372036854775807)\n", "大きすぎます")
 	mustOutIO(t, "a = nanotime()\nmes(a > 0 && nanotime() >= a)\n", "", "true\n")
 	_, _, in, err := runIO(t, "mes(\"hi\")\nend(3)\nmes(\"bye\")\n", "")
 	if err != nil {

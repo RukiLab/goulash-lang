@@ -256,6 +256,12 @@ func TestArrays(t *testing.T) {
 	mustErr(t, "dim()\n", "1 個")
 	mustErr(t, "dim(-1)\n", "0 以上")
 	mustErr(t, "dim(\"x\")\n", "整数である必要があります")
+	// The total element count (product of sizes) is capped at 2^20;
+	// beyond that is a script error, never a Go panic in make().
+	// dim(0) stays valid, and the cap itself is allocatable.
+	mustErr(t, "dim(9223372036854775807)\n", "上限 1048576 を超えています")
+	mustErr(t, "dim(1024, 1025)\n", "上限 1048576 を超えています")
+	mustOut(t, "a = dim(1024, 1024)\nmes(length(a))\nmes(length(a[0]))\n", "1024\n1024\n")
 }
 
 func TestFunctions(t *testing.T) {
