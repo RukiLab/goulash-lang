@@ -33,5 +33,5 @@ switch d {
 
 // 字句解析の作例（エディタ支援向け）
 t = lextokens("x = 1")
-mes(t[0].type)
-mes(t[0].text)
+mes(t[0][0])
+mes(t[0][1])
