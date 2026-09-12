@@ -234,11 +234,11 @@ mes("hello")
 
 ```text
 def if else repeat while switch case default
-as break continue return try catch
+as break continue return
 true false null
 ```
 
-`goto`・`gosub`・`elif` に特別な意味はなく、通常の識別子として使用できます。
+`goto`・`gosub`・`elif`・`try`・`catch` に特別な意味はなく、通常の識別子として使用できます。
 `*` ラベル構文は存在しないため、`*` で始まる行は構文エラーになります。
 
 ---
@@ -397,7 +397,7 @@ a = [1, 2, 3,]
 
 # 型と値
 
-`Goulash` の値には次の7種類があります。
+`Goulash` の値には次の6種類があります。関数は値ではありません（`def` で名前を登録し、呼び出しにのみ使用します）。
 
 | 型          | 説明             | 例            |
 | ---------- | -------------- | ------------ |
@@ -407,7 +407,6 @@ a = [1, 2, 3,]
 | `string`   | 文字列            | `"hello"`    |
 | `bool`     | 真偽値            | `true`       |
 | `array`    | 可変長配列          | `[1, 2]`     |
-| `function` | 関数値（クロージャ）     | `def f() {}` |
 
 ## intとfloat
 
@@ -749,8 +748,8 @@ switch x {
 * `default` の位置は自由です。
 * フォールスルーはありません。
 * 最初に一致した `case` だけ実行されます。
-* 比較には深い比較が使用されます。
-* 配列の比較にも対応します。
+* 比較は `==` / `!=` の等価判定です。
+* 配列は同一実体のときのみ等しくなります（深い比較はしません）。
 * `int` と `float` は自動的に比較可能です。
 
 ---
@@ -785,35 +784,7 @@ repeat 10 as i {
 
 また、関数呼び出しをまたいで伝播することはありません。
 
----
-
-## try / catch
-
-```hsp
-try {
-    mes(1 / 0)
-} catch(e) {
-    mes("caught: " + e)
-}
-```
-
-エラーが発生すると `catch` が実行されます。
-
-`catch` の変数には、位置情報付きのエラーメッセージが文字列として格納されます。
-
-```hsp
-try {
-    data = noteload("save.txt")
-} catch(e) {
-    data = ""
-}
-```
-
-`catch` 変数は `catch` ブロック内だけで有効です。
-
-`break`、`continue`、`return`、`end()` は捕捉されず、そのまま伝播します。
-
-任意のエラーは `throw()` で発生させられます。
+`try` / `catch` は廃止されました（通常の識別子として使用できます）。任意のエラーは `throw()` で発生させられます。
 
 ---
 
@@ -854,30 +825,9 @@ greet("Alice")
 mes(add(1, 2))
 ```
 
-関数はクロージャとして定義時の環境を保持します。
+`def` はトップレベルにのみ記述できます。関数は値として扱えません（代入・引数・`vartype` 等では変数未定義エラーになります）。呼び出し時はグローバル変数を参照できます。
 
-パラメータの重複、および組み込み関数と同名の定義はエラーになります。
-
----
-
-## デフォルト引数
-
-```hsp
-def greet(name, mark="!") {
-    mes("Hello, " + name + mark)
-}
-
-greet("Alice")
-greet("Bob", "?")
-```
-
-仕様：
-
-* 末尾のパラメータにだけ既定値を指定できます。
-* 既定値は呼び出し時に、呼び出し元の環境で評価されます。
-* 既定値付きパラメータの後ろに必須パラメータは置けません。
-* 省略された場合だけ既定値の式が評価されます。
-* 既定値の式から他のパラメータを参照することはできません。
+パラメータの重複、および組み込み関数と同名の定義はエラーになります。引数の個数は厳密に一致する必要があります。
 
 ---
 
@@ -938,10 +888,9 @@ greet("Bob", "?")
 | `if` | `cond`, `then[]`, `else[]`／`else if`ノード／`null` |
 | `while` | `cond`, `body[]` |
 | `repeat` | `count`, `var`（なしは`null`）, `item`（なしは`null`）, `body[]` |
-| `try` | `body[]`, `var`（文字列）, `catch[]` |
 | `switch` | `value`, `cases[]`（`["case", line, col, text, values[], body[], default]`） |
 | `return` | `value`（なしは`null`） |
-| `def` | `name`（文字列）, `params[]`（`["param", line, col, text, name, default]`、`default`なしは`null`）, `body[]` |
+| `def` | `name`（文字列）, `params[]`（`["param", line, col, text, name]`）, `body[]` |
 | `break` / `continue` | なし |
 | `int` / `float` / `string` / `bool` | `value` |
 | `null` | なし |

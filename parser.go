@@ -160,7 +160,7 @@ func (p *parser) parseProgram() (*Program, error) {
 			t := p.peek()
 			return nil, p.errAt(t, "セミコロンは使用できません。文は改行で区切ってください")
 		}
-		s, err := p.parseStmt()
+		s, err := p.parseStmt(true)
 		if err != nil {
 			return nil, err
 		}
@@ -184,10 +184,16 @@ func (p *parser) parseProgram() (*Program, error) {
 
 // ---------- statements ----------
 
-func (p *parser) parseStmt() (Stmt, error) {
+func (p *parser) parseStmt(top bool) (Stmt, error) {
 	t := p.peek()
 	switch t.Type {
 	case TokDef:
+		// Nested functions are abolished: def lives only at the top
+		// level (function bodies, like all blocks, go through
+		// parseBlock with top=false).
+		if !top {
+			return nil, p.errAt(t, "def はトップレベルにのみ記述できます")
+		}
 		return p.parseDef()
 	case TokIf:
 		return p.parseIf()
@@ -197,8 +203,6 @@ func (p *parser) parseStmt() (Stmt, error) {
 		return p.parseWhile()
 	case TokSwitch:
 		return p.parseSwitch()
-	case TokTry:
-		return p.parseTry()
 	case TokBreak:
 		p.next()
 		return &BreakStmt{At: posOf(t)}, nil
@@ -236,7 +240,7 @@ func (p *parser) parseBlock() (*BlockStmt, error) {
 			t := p.peek()
 			return nil, p.errAt(t, "セミコロンは使用できません。文は改行で区切ってください")
 		}
-		s, err := p.parseStmt()
+		s, err := p.parseStmt(false)
 		if err != nil {
 			return nil, err
 		}
@@ -271,7 +275,6 @@ func (p *parser) parseDef() (Stmt, error) {
 	var params []Param
 	p.skipNewlines()
 	if p.peek().Type != TokRParen {
-		seenDefault := false
 		for {
 			p.skipNewlines()
 			pt, err := p.expect(TokIdent)
@@ -281,16 +284,7 @@ func (p *parser) parseDef() (Stmt, error) {
 			pm := Param{Name: pt.Lit, At: posOf(pt)}
 			p.skipNewlines()
 			if p.peek().Type == TokAssign {
-				p.next()
-				p.skipNewlines()
-				d, err := p.parseOr(true)
-				if err != nil {
-					return nil, err
-				}
-				pm.Default = d
-				seenDefault = true
-			} else if seenDefault {
-				return nil, p.errAt(pt, "デフォルト引数の後に必須引数は置けません")
+				return nil, p.errAt(pt, "デフォルト引数は廃止されました")
 			}
 			params = append(params, pm)
 			p.skipNewlines()
@@ -394,37 +388,6 @@ func (p *parser) parseWhile() (Stmt, error) {
 		return nil, err
 	}
 	return &WhileStmt{Cond: cond, Body: body, At: posOf(kw)}, nil
-}
-
-func (p *parser) parseTry() (Stmt, error) {
-	kw := p.next() // try
-	body, err := p.parseBlock()
-	if err != nil {
-		return nil, err
-	}
-	// `} catch(e) {` on one line or across newlines (like else).
-	save := p.pos
-	p.skipNewlines()
-	if p.peek().Type != TokCatch {
-		p.pos = save
-		return nil, p.errAt(p.peek(), "try には catch が必要です")
-	}
-	p.next() // catch
-	if _, err := p.expect(TokLParen); err != nil {
-		return nil, err
-	}
-	v, err := p.expect(TokIdent)
-	if err != nil {
-		return nil, p.errAt(p.peek(), "catch の後に変数名が必要です")
-	}
-	if _, err := p.expect(TokRParen); err != nil {
-		return nil, err
-	}
-	catchBody, err := p.parseBlock()
-	if err != nil {
-		return nil, err
-	}
-	return &TryStmt{Body: body, Var: v.Lit, Catch: catchBody, At: posOf(kw)}, nil
 }
 
 func (p *parser) parseSwitch() (Stmt, error) {

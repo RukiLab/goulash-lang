@@ -189,17 +189,24 @@ func TestParseCompoundAssign(t *testing.T) {
 	mustFailParse(t, "x += \n", "式が必要です")
 }
 
-func TestParseTry(t *testing.T) {
-	prog := mustParse(t, "try {\nmes(1)\n} catch(e) {\nmes(e)\n}\n")
-	ts := prog.Stmts[0].(*TryStmt)
-	if ts.Var != "e" || len(ts.Body.Stmts) != 1 || len(ts.Catch.Stmts) != 1 {
-		t.Fatalf("bad try node: %+v", ts)
+func TestParseTryAbolished(t *testing.T) {
+	// try/catch are ordinary identifiers now: try blocks parse as a
+	// variable followed by a block-looking brace.
+	mustFailParse(t, "try {\nmes(1)\n} catch(e) {\nmes(e)\n}\n", "予期しない '{'")
+	prog := mustParse(t, "try = 5\n")
+	if got := prog.Stmts[0].String(); got != "try = 5" {
+		t.Fatalf("try as ident: %q", got)
 	}
-	if got := ts.String(); got != "try {\n  mes(1)\n} catch(e) {\n  mes(e)\n}" {
-		t.Fatalf("bad try rendering: %q", got)
+}
+
+func TestParseTopLevelDef(t *testing.T) {
+	prog := mustParse(t, "def f() {\nmes(1)\n}\n")
+	if _, ok := prog.Stmts[0].(*DefStmt); !ok {
+		t.Fatalf("top def: %T", prog.Stmts[0])
 	}
-	mustFailParse(t, "try {\nmes(1)\n}\n", "catch")
-	mustFailParse(t, "try {\nmes(1)\n} catch() {\n}\n", "変数名")
+	mustFailParse(t, "if true {\ndef f() {\n}\n}\n", "トップレベル")
+	mustFailParse(t, "def f() {\ndef g() {\n}\n}\n", "トップレベル")
+	mustFailParse(t, "def f(a=1) {\n}\n", "デフォルト引数")
 }
 
 func TestParseMultilineArray(t *testing.T) {

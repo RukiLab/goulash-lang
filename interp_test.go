@@ -81,7 +81,7 @@ func TestRepeatCounter(t *testing.T) {
 	mustOut(t, "s = 0\nrepeat 10 as i {\ns = s + i\n}\nmes(s)\n", "45\n")
 	mustErr(t, "repeat 2 as i {\nmes(i)\n}\nmes(i)\n", "未定義の変数")
 	mustErr(t, "repeat 2 as i {\ni = 100\n}\n", "読み取り専用")
-	mustErr(t, "repeat 2 as i {\ndef i() {\n}\n}\n", "読み取り専用")
+	mustErr(t, "repeat 2 as i {\ndef i() {\n}\n}\n", "トップレベル")
 	mustErr(t, "repeat true {\nmes(1)\n}\n", "整数または配列")
 	mustErr(t, "repeat -1 {\nmes(1)\n}\n", "0 以上")
 }
@@ -160,21 +160,12 @@ func TestCompoundAssign(t *testing.T) {
 	mustErr(t, "x = 1\nx /= 0\n", "0 による除算")
 }
 
-func TestTryCatch(t *testing.T) {
-	mustOut(t, "try {\nmes(1 / 0)\n}\ncatch(e) {\nmes(\"caught\")\n}\n", "caught\n")
-	mustOut(t, "try {\nmes(nosuchvar)\n}\ncatch(e) {\nmes(e)\n}\n", "2:5: 未定義の変数 \"nosuchvar\" です\n")
-	mustOut(t, "try {\nmes(\"ok\")\n}\ncatch(e) {\nmes(\"bad\")\n}\n", "ok\n")
-	mustOut(t, "try {\nthrow(\"boom\")\n}\ncatch(e) {\nmes(e)\n}\n", "2:6: boom\n")
-	// Nested try: inner catch handles, outer never fires.
-	mustOut(t, "try {\ntry {\nthrow(\"in\")\n}\ncatch(a) {\nmes(a)\n}\n}\ncatch(b) {\nmes(\"outer\")\n}\n", "3:6: in\n")
-	// Uncaught errors still abort.
-	mustErr(t, "try {\nthrow(\"x\")\n}\ncatch(e) {\nthrow(\"y\")\n}\n", "y")
+func TestTryCatchAbolished(t *testing.T) {
+	// try/catch are ordinary identifiers now; try blocks are gone.
+	mustOut(t, "try = 5\nmes(try)\n", "5\n")
+	mustErr(t, "try {\nmes(1)\n}\n", "予期しない '{'")
+	// throw() itself stays: uncaught errors abort.
 	mustErr(t, "throw(\"late\")\n", "late")
-	// Control flow passes through: break/return are not caught.
-	mustOut(t, "repeat 3 as i {\ntry {\nif i == 1 {\nbreak\n}\n}\ncatch(e) {\nmes(\"bad\")\n}\nmes(i)\n}\n", "0\n")
-	mustOut(t, "def f() {\ntry {\nreturn 7\n}\ncatch(e) {\nreturn 8\n}\n}\nmes(f())\n", "7\n")
-	// The catch variable is scoped to the catch body.
-	mustErr(t, "try {\nthrow(\"x\")\n}\ncatch(e) {\n}\nmes(e)\n", "未定義の変数")
 }
 
 func TestRepeatArray(t *testing.T) {
@@ -263,11 +254,13 @@ func TestFunctions(t *testing.T) {
 	mustOut(t, "def fact(n) {\nif n <= 1 {\nreturn 1\n}\nreturn n * fact(n - 1)\n}\nmes(fact(5))\n", "120\n")
 	mustErr(t, "hello()\n", "未定義の関数")
 	mustErr(t, "def f(a) {\n}\nf(1, 2)\n", "1 個必要")
-	mustOut(t, "def greet(name, mark=\"!\") {\nreturn name + mark\n}\nmes(greet(\"hi\"))\nmes(greet(\"hi\", \"?\"))\n", "hi!\nhi?\n")
-	mustOut(t, "n = 10\ndef f(a, b=n*2) {\nreturn b\n}\nmes(f(1))\nn = 100\nmes(f(1))\nmes(f(1, 5))\n", "20\n200\n5\n")
+	mustErr(t, "def greet(name, mark=\"!\") {\n}\n", "デフォルト引数")
 	mustErr(t, "def f(a) {\n}\nf()\n", "1 個必要")
-	mustErr(t, "def f(a=1, b) {\n}\n", "デフォルト引数の後に必須引数")
+	mustErr(t, "def f(a=1, b) {\n}\n", "デフォルト引数")
 	mustErr(t, "x = 5\nx()\n", "関数ではありません")
+	// Functions are not values: names only call, never read or store.
+	mustErr(t, "def f() {\n}\nmes(f)\n", "未定義の変数")
+	mustErr(t, "def f() {\n}\ng = f\n", "未定義の変数")
 }
 
 func TestMes(t *testing.T) {

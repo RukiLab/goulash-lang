@@ -105,6 +105,9 @@ type Interp struct {
 	// Directory of the running script file ("" in the REPL): base
 	// for relative paths in file builtins.
 	scriptDir string
+	// User functions by name. Functions are not values: def registers
+	// here, never in an environment.
+	funcs map[string]*FuncVal
 }
 
 // NewInterp creates an interpreter writing output to out and reading input
@@ -116,13 +119,13 @@ func NewInterp(out io.Writer) *Interp {
 // NewInterpWithIO creates an interpreter with explicit output/input streams
 // (used by tests).
 func NewInterpWithIO(out io.Writer, in io.Reader) *Interp {
-	return &Interp{globals: NewEnv(nil), be: NewConsoleBackend(out, in), in: in, errOut: os.Stderr}
+	return &Interp{globals: NewEnv(nil), be: NewConsoleBackend(out, in), in: in, errOut: os.Stderr, funcs: map[string]*FuncVal{}}
 }
 
 // NewInterpWithBackend creates an interpreter over an arbitrary Backend
 // (used by the GUI frontend).
 func NewInterpWithBackend(be Backend, in io.Reader) *Interp {
-	return &Interp{globals: NewEnv(nil), be: be, in: in, errOut: os.Stderr}
+	return &Interp{globals: NewEnv(nil), be: be, in: in, errOut: os.Stderr, funcs: map[string]*FuncVal{}}
 }
 
 // SetArgs stores command-line arguments for args() (used by run).
@@ -253,13 +256,12 @@ func (in *Interp) execStmt(s Stmt, env *Env) error {
 			}
 			seen[p.Name] = true
 		}
-		if scope, ok := env.find(n.Name); ok && scope == env && scope.readonly[n.Name] {
-			return rtErrf(n.At, "%q を再定義できません：repeat カウンタは読み取り専用です", n.Name)
-		}
 		if isBuiltin(n.Name) {
 			return rtErrf(n.At, "%q を再定義できません：組み込み関数です", n.Name)
 		}
-		env.Define(n.Name, FuncOf(&FuncVal{Name: n.Name, Params: n.Params, Body: n.Body, Closure: env}))
+		// Top-level only (enforced by the parser), so no closure and
+		// no scope juggling: register by name.
+		in.funcs[n.Name] = &FuncVal{Name: n.Name, Params: n.Params, Body: n.Body}
 		return nil
 	case *IfStmt:
 		c, err := in.evalExpr(n.Cond, env)
@@ -373,37 +375,8 @@ func (in *Interp) execStmt(s Stmt, env *Env) error {
 		panic(returnSignal{v: v})
 	case *BlockStmt:
 		return in.execBlock(n.Stmts, env)
-	case *TryStmt:
-		return in.execTry(n, env)
 	}
 	return rtErrf(s.Pos(), "内部エラー：不明な文です")
-}
-
-// execTry runs the body; on error it binds the message to Var and runs
-// the catch body. Control-flow panics (break/continue/return/end)
-// propagate untouched since they are not error returns.
-func (in *Interp) execTry(n *TryStmt, env *Env) error {
-	if err := in.execBlock(n.Body.Stmts, env); err == nil {
-		return nil
-	} else {
-		oldVal, hadVal := env.vars[n.Var]
-		oldRO := env.readonly[n.Var]
-		env.vars[n.Var] = Str(err.Error())
-		env.readonly[n.Var] = true
-		defer func() {
-			if hadVal {
-				env.vars[n.Var] = oldVal
-			} else {
-				delete(env.vars, n.Var)
-			}
-			if oldRO {
-				env.readonly[n.Var] = true
-			} else {
-				delete(env.readonly, n.Var)
-			}
-		}()
-		return in.execBlock(n.Catch.Stmts, env)
-	}
 }
 
 // execRepeatArray iterates array elements: `repeat arr as x` binds each
@@ -714,16 +687,18 @@ func (in *Interp) evalExpr(x Expr, env *Env) (Value, error) {
 }
 
 func (in *Interp) evalCall(n *CallExpr, env *Env) (Value, error) {
-	// Named calls: user functions first, builtins second.
+	// Named calls: user functions first, builtins second. Functions
+	// are not values, so a variable with the call name is never a
+	// function (calling one is an error, like calling any value).
 	if v, ok := n.Callee.(*VarExpr); ok {
+		if fn, ok := in.funcs[v.Name]; ok {
+			return in.callChecked(fn, n.Args, env, n.At)
+		}
 		if fv, ok := env.Lookup(v.Name); ok {
 			if fv.K == KArray {
 				return Null(), rtErrf(n.At, "値は配列です。配列へのアクセスは [...] を使用してください（例：a[0]、a(0) ではありません）")
 			}
-			if fv.K != KFunc {
-				return Null(), rtErrf(n.At, "%q は %s であり、関数ではありません", v.Name, typeNameOf(fv))
-			}
-			return in.callChecked(fv.Fn, n.Args, env, n.At)
+			return Null(), rtErrf(n.At, "%q は %s であり、関数ではありません", v.Name, typeNameOf(fv))
 		}
 		if isBuiltin(v.Name) {
 			args := make([]Value, len(n.Args))
@@ -745,38 +720,18 @@ func (in *Interp) evalCall(n *CallExpr, env *Env) (Value, error) {
 	if callee.K == KArray {
 		return Null(), rtErrf(n.At, "値は配列です。配列へのアクセスは [...] を使用してください（例：a[0]、a(0) ではありません）")
 	}
-	if callee.K != KFunc {
-		name := n.Callee.String()
-		if v, ok := n.Callee.(*VarExpr); ok {
-			return Null(), rtErrf(n.At, "未定義の関数 %q です", v.Name)
-		}
-		return Null(), rtErrf(n.At, "%s を呼び出せません（%s は関数ではありません）", name, typeNameOf(callee))
-	}
-	fn := callee.Fn
-	return in.callChecked(fn, n.Args, env, n.At)
+	return Null(), rtErrf(n.At, "%s を呼び出せません（%s は関数ではありません）", n.Callee.String(), typeNameOf(callee))
 }
 
-// callChecked evaluates call arguments and invokes fn.
-// Missing trailing arguments are filled from default expressions,
-// evaluated in the caller's environment at call time.
+// callChecked evaluates call arguments and invokes fn. Arity is exact:
+// default arguments are abolished.
 func (in *Interp) callChecked(fn *FuncVal, argExprs []Expr, env *Env, at Pos) (Value, error) {
-	if len(argExprs) > len(fn.Params) {
+	if len(argExprs) != len(fn.Params) {
 		return Null(), rtErrf(at, "関数 %s は引数を %d 個必要としますが、%d 個が渡されました", fn.Name, len(fn.Params), len(argExprs))
 	}
 	args := make([]Value, len(fn.Params))
 	for i, a := range argExprs {
 		ev, err := in.evalExpr(a, env)
-		if err != nil {
-			return Null(), err
-		}
-		args[i] = ev
-	}
-	for i := len(argExprs); i < len(fn.Params); i++ {
-		d := fn.Params[i].Default
-		if d == nil {
-			return Null(), rtErrf(at, "関数 %s は引数を %d 個必要としますが、%d 個が渡されました", fn.Name, len(fn.Params), len(argExprs))
-		}
-		ev, err := in.evalExpr(d, env)
 		if err != nil {
 			return Null(), err
 		}
@@ -789,7 +744,8 @@ func (in *Interp) callFunc(fn *FuncVal, args []Value, at Pos) (v Value, err erro
 	if len(args) != len(fn.Params) {
 		return Null(), rtErrf(at, "関数 %s は引数を %d 個必要としますが、%d 個が渡されました", fn.Name, len(fn.Params), len(args))
 	}
-	callEnv := NewEnv(fn.Closure)
+	// No closure: top-level functions see globals as their parent scope.
+	callEnv := NewEnv(in.globals)
 	for i, p := range fn.Params {
 		callEnv.Define(p.Name, args[i])
 	}

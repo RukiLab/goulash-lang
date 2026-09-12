@@ -155,20 +155,6 @@ func (n *WhileStmt) String() string {
 	return fmt.Sprintf("while %s %s", n.Cond.String(), n.Body.String())
 }
 
-// TryStmt runs Body; on error binds the message to Var and runs Catch.
-type TryStmt struct {
-	Body  *BlockStmt
-	Var   string
-	Catch *BlockStmt
-	At    Pos
-}
-
-func (n *TryStmt) Pos() Pos  { return n.At }
-func (n *TryStmt) stmtNode() {}
-func (n *TryStmt) String() string {
-	return fmt.Sprintf("try %s catch(%s) %s", n.Body.String(), n.Var, n.Catch.String())
-}
-
 // SwitchCase is one `case v, ... { }` or `default { }` branch.
 // Default branches carry no Values.
 type SwitchCase struct {
@@ -238,10 +224,7 @@ func (n *ReturnStmt) String() string {
 
 type Param struct {
 	Name string
-	// Default is the default value expression (nil = required).
-	// It is evaluated in the caller's environment at call time.
-	Default Expr
-	At      Pos
+	At   Pos
 }
 
 type DefStmt struct {
@@ -257,9 +240,6 @@ func (n *DefStmt) String() string {
 	names := make([]string, len(n.Params))
 	for i, p := range n.Params {
 		names[i] = p.Name
-		if p.Default != nil {
-			names[i] += "=" + p.Default.String()
-		}
 	}
 	return fmt.Sprintf("def %s(%s) %s", n.Name, strings.Join(names, ", "), n.Body.String())
 }

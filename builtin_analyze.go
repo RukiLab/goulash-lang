@@ -147,8 +147,6 @@ func stmtValue(s Stmt) Value {
 		return nodeArr("repeat", n.Pos(), n.String(), exprValue(n.Count), varV, itemV, ArrayOf(blockValues(n.Body)))
 	case *WhileStmt:
 		return nodeArr("while", n.Pos(), n.String(), exprValue(n.Cond), ArrayOf(blockValues(n.Body)))
-	case *TryStmt:
-		return nodeArr("try", n.Pos(), n.String(), ArrayOf(blockValues(n.Body)), Str(n.Var), ArrayOf(blockValues(n.Catch)))
 	case *SwitchStmt:
 		cases := make([]Value, 0, len(n.Cases))
 		for _, c := range n.Cases {
@@ -168,7 +166,7 @@ func stmtValue(s Stmt) Value {
 	case *DefStmt:
 		params := make([]Value, 0, len(n.Params))
 		for _, p := range n.Params {
-			params = append(params, nodeArr("param", p.At, p.Name, Str(p.Name), exprOrNull(p.Default)))
+			params = append(params, nodeArr("param", p.At, p.Name, Str(p.Name)))
 		}
 		return nodeArr("def", n.Pos(), n.String(), Str(n.Name), ArrayOf(params), ArrayOf(blockValues(n.Body)))
 	default:

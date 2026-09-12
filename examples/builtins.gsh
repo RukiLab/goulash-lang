@@ -44,11 +44,6 @@ repeat [1, 2, 3] as x {
     total += x
 }
 mes("total=" + str(total))
-try {
-    mes(1 / 0)
-} catch(e) {
-    mes("caught!")
-}
 
 sleep(10)
 mes("done")

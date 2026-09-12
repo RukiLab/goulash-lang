@@ -583,7 +583,8 @@ func TestStringExtras(t *testing.T) {
 }
 
 func TestVartypeFunc(t *testing.T) {
-	mustOutIO(t, "def f() {\n}\nmes(vartype(f))\nmes(vartype([1]))\n", "", "function\narray\n")
+	mustErrIO(t, "def f() {\n}\nmes(vartype(f))\n", "未定義の変数")
+	mustOutIO(t, "def f() {\n}\nmes(vartype([1]))\nmes(f())\n", "", "array\nnull\n")
 }
 
 func TestLexTokens(t *testing.T) {
@@ -594,8 +595,8 @@ func TestLexTokens(t *testing.T) {
 }
 
 func TestParsetree(t *testing.T) {
-	mustOutIO(t, "t = parsetree(\"def f(a, b=1) {\\nreturn a\\n}\\nmes(f(2))\\n\")\nmes(t[0])\nmes(length(t[4]))\nmes(t[4][0][4])\nmes(t[4][0][5][1][5][4])\nmes(t[4][1][0])\nmes(t[4][0][1])\n", "",
-		"program\n2\nf\n1\ncall\n1\n")
+	mustOutIO(t, "t = parsetree(\"def f(a, b) {\\nreturn a\\n}\\nmes(f(1, 2))\\n\")\nmes(t[0])\nmes(length(t[4]))\nmes(t[4][0][4])\nmes(t[4][0][5][1][4])\nmes(t[4][1][0])\nmes(t[4][0][1])\n", "",
+		"program\n2\nf\nb\ncall\n1\n")
 	// Operators use source symbols; expression statements unwrap.
 	mustOutIO(t, "t = parsetree(\"x = 1 + 2 * 3\\n\")\nmes(t[4][0][0])\nmes(t[4][0][5][4])\nmes(t[4][0][5][6][0])\n", "", "assign\n+\nbinary\n")
 	// Bare enums (pre-pass) surface with member positions and values.

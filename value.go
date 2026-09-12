@@ -2,7 +2,6 @@
 package main
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 )
@@ -17,7 +16,6 @@ const (
 	KString
 	KBool
 	KArray
-	KFunc
 )
 
 func (k Kind) String() string {
@@ -34,14 +32,13 @@ func (k Kind) String() string {
 		return "bool"
 	case KArray:
 		return "array"
-	case KFunc:
-		return "function"
 	}
 	return "unknown"
 }
 
 // Value is a dynamically typed v0.1 value. Arrays hold shared pointers
-// so `b = a` shares elements (reference semantics).
+// so `b = a` shares elements (reference semantics). Functions are not
+// values: def registers a callable name, never a value.
 type Value struct {
 	K   Kind
 	I   int64
@@ -49,7 +46,6 @@ type Value struct {
 	S   string
 	B   bool
 	Arr *Array
-	Fn  *FuncVal
 }
 
 // Array is a heterogeneous resizable sequence.
@@ -57,12 +53,12 @@ type Array struct {
 	Elems []Value
 }
 
-// FuncVal is a user function with its defining environment (closure).
+// FuncVal is a user function: top-level only, no closure. Calls run
+// with the globals as the parent scope.
 type FuncVal struct {
-	Name    string
-	Params  []Param
-	Body    *BlockStmt
-	Closure *Env
+	Name   string
+	Params []Param
+	Body   *BlockStmt
 }
 
 func Null() Value             { return Value{K: KNull} }
@@ -71,7 +67,6 @@ func Float(v float64) Value   { return Value{K: KFloat, F: v} }
 func Str(v string) Value      { return Value{K: KString, S: v} }
 func Bool(v bool) Value       { return Value{K: KBool, B: v} }
 func ArrayOf(e []Value) Value { return Value{K: KArray, Arr: &Array{Elems: e}} }
-func FuncOf(f *FuncVal) Value { return Value{K: KFunc, Fn: f} }
 
 // Stringify renders a value for mes() output and error messages.
 // Strings print raw; floats use the shortest round-trip form.
@@ -96,8 +91,6 @@ func Stringify(v Value) string {
 			parts[i] = Stringify(e)
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
-	case KFunc:
-		return fmt.Sprintf("<function %s>", v.Fn.Name)
 	}
 	return "unknown"
 }
@@ -107,7 +100,8 @@ func typeNameOf(v Value) string {
 	return v.K.String()
 }
 
-// valuesEqual implements ==/!= (deep for arrays).
+// valuesEqual implements ==/!=. Arrays compare by reference (identity);
+// deep comparison is abolished.
 func valuesEqual(a, b Value) bool {
 	if a.K == KInt && b.K == KFloat {
 		return float64(a.I) == b.F
@@ -130,17 +124,7 @@ func valuesEqual(a, b Value) bool {
 	case KBool:
 		return a.B == b.B
 	case KArray:
-		if len(a.Arr.Elems) != len(b.Arr.Elems) {
-			return false
-		}
-		for i := range a.Arr.Elems {
-			if !valuesEqual(a.Arr.Elems[i], b.Arr.Elems[i]) {
-				return false
-			}
-		}
-		return true
-	case KFunc:
-		return a.Fn == b.Fn
+		return a.Arr == b.Arr
 	}
 	return false
 }

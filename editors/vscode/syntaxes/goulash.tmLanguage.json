@@ -78,7 +78,7 @@
       "patterns": [
         {
           "name": "keyword.control.goulash",
-          "match": "\\b(def|if|else|repeat|while|switch|case|default|as|break|continue|return|try|catch)\\b"
+          "match": "\\b(def|if|else|repeat|while|switch|case|default|as|break|continue|return)\\b"
         }
       ]
     },

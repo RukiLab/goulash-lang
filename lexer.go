@@ -37,8 +37,6 @@ const (
 	TokBreak    TokenType = "BREAK"
 	TokContinue TokenType = "CONTINUE"
 	TokReturn   TokenType = "RETURN"
-	TokTry      TokenType = "TRY"
-	TokCatch    TokenType = "CATCH"
 
 	TokPlus         TokenType = "PLUS"         // +
 	TokMinus        TokenType = "MINUS"        // -
@@ -127,8 +125,6 @@ var keywords = map[string]TokenType{
 	"break":    TokBreak,
 	"continue": TokContinue,
 	"return":   TokReturn,
-	"try":      TokTry,
-	"catch":    TokCatch,
 	"true":     TokTrue,
 	"false":    TokFalse,
 }
