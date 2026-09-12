@@ -201,6 +201,9 @@ func (l *lexer) next() (Token, error) {
 		// Line comment.
 		if c == '/' && l.peekAt(1) == '/' {
 			for !l.eof() && l.peek() != '\n' {
+				if l.peek() == 0 {
+					return Token{}, &LexError{Line: l.line, Column: l.col, Msg: "不正な文字 \"\\0\" です"}
+				}
 				l.advance()
 			}
 			continue
@@ -221,6 +224,13 @@ func (l *lexer) next() (Token, error) {
 
 	line, col := l.line, l.col
 	c := l.peek()
+
+	// A raw NUL byte is never valid source text (the `\0` escape is
+	// the only way to spell one). peek() also returns 0 at EOF, but
+	// that case returned above.
+	if c == 0 {
+		return Token{}, &LexError{Line: line, Column: col, Msg: "不正な文字 \"\\0\" です"}
+	}
 
 	// Newline = statement separator.
 	if c == '\n' {
@@ -397,6 +407,9 @@ func (l *lexer) skipBlockComment() error {
 	l.advance()
 	depth := 1
 	for !l.eof() {
+		if l.peek() == 0 {
+			return &LexError{Line: l.line, Column: l.col, Msg: "不正な文字 \"\\0\" です"}
+		}
 		if l.peek() == '/' && l.peekAt(1) == '*' {
 			l.advance()
 			l.advance()
@@ -426,6 +439,9 @@ func (l *lexer) readString() (Token, error) {
 			return Token{}, &LexError{Line: line, Column: col, Msg: "文字列リテラルが閉じられていません"}
 		}
 		c := l.peek()
+		if c == 0 {
+			return Token{}, &LexError{Line: l.line, Column: l.col, Msg: "不正な文字 \"\\0\" です"}
+		}
 		if c == '\n' {
 			return Token{}, &LexError{Line: line, Column: col, Msg: "文字列リテラルが閉じられていません（文字列内で改行しています）"}
 		}
@@ -474,6 +490,11 @@ func (l *lexer) readNumber() (Token, error) {
 		l.advance()
 	}
 	isFloat := false
+	// `3.` is not a float: a dot must be followed by a digit here.
+	// (A leading-dot float like `.5` enters through the caller.)
+	if l.peek() == '.' && !isDigit(l.peekAt(1)) {
+		return Token{}, &LexError{Line: line, Column: col, Msg: "不正な数値リテラルです"}
+	}
 	if l.peek() == '.' && isDigit(l.peekAt(1)) {
 		isFloat = true
 		l.advance() // dot
@@ -482,11 +503,6 @@ func (l *lexer) readNumber() (Token, error) {
 		}
 	}
 	if l.peek() == 'e' || l.peek() == 'E' {
-		save := l.pos
-		sLine, sCol := l.line, l.col
-		_ = save
-		_ = sLine
-		_ = sCol
 		l.advance()
 		if l.peek() == '+' || l.peek() == '-' {
 			l.advance()
@@ -498,6 +514,11 @@ func (l *lexer) readNumber() (Token, error) {
 		for !l.eof() && isDigit(l.peek()) {
 			l.advance()
 		}
+	}
+	// Digits glued to letters or `_` (1_000, 123abc, 0d5) are a
+	// malformed number, not a number plus an identifier.
+	if c := l.peek(); isAlpha(c) || c == '_' {
+		return Token{}, &LexError{Line: line, Column: col, Msg: "不正な数値リテラルです"}
 	}
 	lit := string(l.runes[start:l.pos])
 	if isFloat {
@@ -552,6 +573,12 @@ func (l *lexer) readRadix(line, col, base int, name string) (Token, error) {
 	}
 	v, err := strconv.ParseInt(digits, base, 64)
 	if err != nil {
+		// Exactly 2^63 is allowed through as decimal so unary minus
+		// can fold it to MinInt64; the bare positive literal still
+		// fails in the parser.
+		if u, uerr := strconv.ParseUint(digits, base, 64); uerr == nil && u == 1<<63 {
+			return Token{Type: TokInt, Lit: "9223372036854775808", Line: line, Column: col}, nil
+		}
 		return Token{}, &LexError{Line: line, Column: col, Msg: fmt.Sprintf("%sリテラルが範囲外です", name)}
 	}
 	return Token{Type: TokInt, Lit: strconv.FormatInt(v, 10), Line: line, Column: col}, nil

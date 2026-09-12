@@ -166,27 +166,35 @@ func TestParseBitwisePrecedence(t *testing.T) {
 }
 
 func TestParseCompoundAssign(t *testing.T) {
-	// `x op= v` desugars to `x = (x op v)`.
+	// `x op= v` keeps its target (single evaluation at runtime).
 	for _, tc := range []struct{ src, want string }{
-		{"x += 1\n", "x = (x + 1)"},
-		{"x -= 1\n", "x = (x - 1)"},
-		{"x *= 2\n", "x = (x * 2)"},
-		{"x /= 2\n", "x = (x / 2)"},
-		{"x %= 2\n", "x = (x % 2)"},
-		{"x &= 3\n", "x = (x & 3)"},
-		{"x |= 3\n", "x = (x | 3)"},
-		{"x ^= 3\n", "x = (x ^ 3)"},
-		{"x <<= 1\n", "x = (x << 1)"},
-		{"x >>= 1\n", "x = (x >> 1)"},
-		{"a[0] += 5\n", "a[0] = (a[0] + 5)"},
+		{"x += 1\n", "x += 1"},
+		{"x -= 1\n", "x -= 1"},
+		{"x *= 2\n", "x *= 2"},
+		{"x /= 2\n", "x /= 2"},
+		{"x %= 2\n", "x %= 2"},
+		{"x &= 3\n", "x &= 3"},
+		{"x |= 3\n", "x |= 3"},
+		{"x ^= 3\n", "x ^= 3"},
+		{"x <<= 1\n", "x <<= 1"},
+		{"x >>= 1\n", "x >>= 1"},
+		{"a[0] += 5\n", "a[0] += 5"},
 	} {
 		prog := mustParse(t, tc.src)
-		if got := prog.Stmts[0].String(); got != tc.want {
+		st, ok := prog.Stmts[0].(*CompoundAssignStmt)
+		if !ok {
+			t.Fatalf("src %q: got %T, want *CompoundAssignStmt", tc.src, prog.Stmts[0])
+		}
+		if got := st.String(); got != tc.want {
 			t.Fatalf("src %q: got %s, want %s", tc.src, got, tc.want)
 		}
 	}
 	mustFailParse(t, "1 += 2\n", "代入できません")
 	mustFailParse(t, "x += \n", "式が必要です")
+	// Builtin names cannot be bound (assignment, params, loop variables).
+	mustFailParse(t, "def f(mes) {\n}\n", "組み込み関数と同名")
+	mustFailParse(t, "repeat 3 as length {\n}\n", "組み込み関数と同名")
+	mustFailParse(t, "repeat [1] as i, push {\n}\n", "組み込み関数と同名")
 }
 
 func TestParseTryAbolished(t *testing.T) {

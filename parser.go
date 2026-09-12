@@ -60,7 +60,25 @@ func ParseFileMode(path string) (*Program, string, error) {
 type parser struct {
 	toks []Token
 	pos  int
+	// Nesting depth of blocks and expressions (bounded by
+	// maxParseDepth so pathological input cannot overflow the host
+	// stack in the parser or the tree-walk interpreter).
+	depth int
 }
+
+// maxParseDepth caps `{...}` block nesting and expression nesting
+// (parentheses, array/call nesting, unary chains).
+const maxParseDepth = 1000
+
+func (p *parser) enter() error {
+	p.depth++
+	if p.depth > maxParseDepth {
+		return p.errAt(p.peek(), "ネストが深すぎます（上限 %d）", maxParseDepth)
+	}
+	return nil
+}
+
+func (p *parser) leave() { p.depth-- }
 
 func (p *parser) peek() Token {
 	if p.pos >= len(p.toks) {
@@ -226,6 +244,10 @@ func (p *parser) parseBlock() (*BlockStmt, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := p.enter(); err != nil {
+		return nil, err
+	}
+	defer p.leave()
 	b := &BlockStmt{At: posOf(open)}
 	p.skipNewlines()
 	for p.peek().Type != TokRBrace {
@@ -276,6 +298,9 @@ func (p *parser) parseDef() (Stmt, error) {
 			pt, err := p.expect(TokIdent)
 			if err != nil {
 				return nil, err
+			}
+			if isBuiltin(pt.Lit) {
+				return nil, p.errAt(pt, "パラメータ %q は組み込み関数と同名のため使用できません", pt.Lit)
 			}
 			pm := Param{Name: pt.Lit, At: posOf(pt)}
 			p.skipNewlines()
@@ -352,6 +377,9 @@ func (p *parser) parseRepeat() (Stmt, error) {
 		if err != nil {
 			return nil, p.errAt(p.peek(), "'as' の後にカウンタ名が必要です")
 		}
+		if isBuiltin(v.Lit) {
+			return nil, p.errAt(v, "カウンタ名 %q は組み込み関数と同名のため使用できません", v.Lit)
+		}
 		stmt.Var = v.Lit
 		stmt.HasVar = true
 		// `repeat arr as i, item`: index + element (arrays only).
@@ -360,6 +388,9 @@ func (p *parser) parseRepeat() (Stmt, error) {
 			w, err := p.expect(TokIdent)
 			if err != nil {
 				return nil, p.errAt(p.peek(), "',' の後に要素名が必要です")
+			}
+			if isBuiltin(w.Lit) {
+				return nil, p.errAt(w, "要素名 %q は組み込み関数と同名のため使用できません", w.Lit)
 			}
 			stmt.Item = w.Lit
 			stmt.HasItem = true
@@ -474,9 +505,8 @@ func (p *parser) parseAssignOrExpr() (Stmt, error) {
 		}
 		return &AssignStmt{Target: x, Value: v, At: x.Pos()}, nil
 	}
-	// Compound assignment desugars: `x op= v` reads as `x = (x op v)`.
-	// Index/field targets are side-effect free, so double evaluation
-	// is harmless.
+	// Compound assignment keeps its target: `x op= v` evaluates the
+	// target address exactly once (see assignCompound).
 	if binOp, ok := compoundOp(p.peek().Type); ok {
 		op := p.next()
 		if !assignable(x) {
@@ -486,9 +516,10 @@ func (p *parser) parseAssignOrExpr() (Stmt, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &AssignStmt{
+		return &CompoundAssignStmt{
 			Target: x,
-			Value:  &BinaryExpr{Op: binOp, L: x, R: v, At: posOf(op)},
+			Op:     binOp,
+			Value:  v,
 			At:     x.Pos(),
 		}, nil
 	}
@@ -537,6 +568,10 @@ func assignable(x Expr) bool {
 // groups, array literals) always reset to true.
 
 func (p *parser) parseOr(litOK bool) (Expr, error) {
+	if err := p.enter(); err != nil {
+		return nil, err
+	}
+	defer p.leave()
 	l, err := p.parseAnd(litOK)
 	if err != nil {
 		return nil, err
@@ -722,6 +757,15 @@ func (p *parser) parseUnary(litOK bool) (Expr, error) {
 	switch p.peek().Type {
 	case TokMinus, TokBang, TokBitNot:
 		op := p.next()
+		// Fold -9223372036854775808 to MinInt64: the positive half
+		// overflows int64, so parse it as unsigned here. The bare
+		// positive literal stays an error (see parsePrimary).
+		if op.Type == TokMinus && p.peek().Type == TokInt {
+			if u, uerr := strconv.ParseUint(p.peek().Lit, 10, 64); uerr == nil && u == 1<<63 {
+				p.next()
+				return &IntLit{Raw: "-9223372036854775808", Value: -1 << 63, At: posOf(op)}, nil
+			}
+		}
 		x, err := p.parseUnary(litOK)
 		if err != nil {
 			return nil, err

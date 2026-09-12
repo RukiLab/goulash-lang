@@ -64,7 +64,9 @@ func init() {
 		return Null(), rtErrf(at, "exist：%s", err.Error())
 	})
 
-	// dirlist([mask]): names in the current directory, sorted.
+	// dirlist([mask]): names in the script directory (or the working
+	// directory in the REPL), sorted. A mask with a directory part is
+	// resolved with the usual script-first rule.
 	register("dirlist", 0, 1, func(in *Interp, args []Value, at Pos) (Value, error) {
 		mask := "*"
 		if len(args) == 1 {
@@ -74,10 +76,26 @@ func init() {
 				return Null(), err
 			}
 		}
-		entries, err := os.ReadDir(".")
+		dir, file := filepath.Split(mask)
+		if dir == "" {
+			if in.scriptDir != "" {
+				dir = in.scriptDir
+			} else {
+				dir = "."
+			}
+		} else if !filepath.IsAbs(dir) {
+			if q := in.lookupPath(dir); q != "" {
+				dir = q
+			}
+		}
+		if file == "" {
+			file = "*"
+		}
+		entries, err := os.ReadDir(dir)
 		if err != nil {
 			return Null(), rtErrf(at, "dirlist：%s", err.Error())
 		}
+		mask = file
 		var names []string
 		for _, e := range entries {
 			ok, merr := filepath.Match(mask, e.Name())

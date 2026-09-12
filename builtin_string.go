@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 func init() {
@@ -50,10 +51,10 @@ func init() {
 			return Null(), argErr("strmid", 1, at, "start %d は範囲外です（長さ %d）", args[1].I, len(r))
 		}
 		end := start + count
-		// end < start means start+count wrapped on huge count;
-		// clamp like any other over-length end.
+		// Over-length ends are an error, never a silent clamp
+		// (end < start means start+count wrapped on huge count).
 		if end > int64(len(r)) || end < start {
-			end = int64(len(r))
+			return Null(), argErr("strmid", 2, at, "start %d から count %d は長さ %d を超えています", args[1].I, count, len(r))
 		}
 		return Str(string(r[start:end])), nil
 	})
@@ -79,11 +80,10 @@ func init() {
 			return Null(), err
 		}
 		r := []rune(s)
-		if start < 0 {
-			start = 0
-		}
-		if start > int64(len(r)) {
-			return Int(-1), nil
+		// Out-of-range starts are an error, never a silent clamp
+		// (the 2-arg form defaults to 0, which is always valid).
+		if start < 0 || start > int64(len(r)) {
+			return Null(), argErr("instr", 1, at, "start %d は範囲外です（長さ %d）", args[1].I, len(r))
 		}
 		rel := strings.Index(string(r[start:]), sub)
 		if rel < 0 {
@@ -122,12 +122,12 @@ func init() {
 			switch mode {
 			case 1:
 				if whitespace {
-					return strings.TrimLeft(t, " \t\r\n")
+					return strings.TrimLeftFunc(t, unicode.IsSpace)
 				}
 				return strings.TrimLeft(t, cutset)
 			case 2:
 				if whitespace {
-					return strings.TrimRight(t, " \t\r\n")
+					return strings.TrimRightFunc(t, unicode.IsSpace)
 				}
 				return strings.TrimRight(t, cutset)
 			default:

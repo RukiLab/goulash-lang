@@ -95,8 +95,18 @@ func TestBuiltinRedefineGuard(t *testing.T) {
 }
 
 func TestConversions(t *testing.T) {
-	mustOutIO(t, "mes(int(3.9))\nmes(int(\" 12 \"))\nmes(int(true))\nmes(int(\"3.7\"))\n", "", "3\n12\n1\n3\n")
+	mustOutIO(t, "mes(int(3.9))\nmes(int(\" 12 \"))\nmes(int(true))\n", "", "3\n12\n1\n")
 	mustOutIO(t, "mes(float(3))\nmes(float(\"2.5\"))\nmes(float(false))\n", "", "3\n2.5\n0\n")
+	// int(string) is strict base-10 integers only: float spellings fail.
+	mustErrIO(t, "mes(int(\"3.7\"))\n", "変換できません")
+	mustErrIO(t, "mes(int(\"1e2\"))\n", "変換できません")
+	mustErrIO(t, "mes(int(\"0x10\"))\n", "変換できません")
+	// Out-of-range floats and NaN never convert to int.
+	mustErrIO(t, "mes(int(1e300))\n", "変換できません")
+	// NaN/Inf never enter through float() either.
+	mustErrIO(t, "mes(float(\"nan\"))\n", "変換できません")
+	mustErrIO(t, "mes(float(\"inf\"))\n", "変換できません")
+	mustErrIO(t, "mes(float(\"Infinity\"))\n", "変換できません")
 	mustOutIO(t, "mes(str(42))\nmes(str([1, 2]))\nmes(vartype(1))\nmes(vartype(1.5))\nmes(vartype(\"s\"))\nmes(vartype(true))\nmes(vartype([1]))\n", "", "42\n[1, 2]\nint\nfloat\nstring\nbool\narray\n")
 	mustErrIO(t, "mes(int(\"abc\"))\n", "変換できません")
 	mustErrIO(t, "mes(int([1]))\n", "変換できません")
@@ -129,10 +139,13 @@ func TestMath(t *testing.T) {
 	mustErrIO(t, "mes(sqrt(-1))\n", "平方根")
 	mustErrIO(t, "mes(log(0))\n", "正の数")
 	mustErrIO(t, "mes(abs(\"x\"))\n", "数値である必要があります")
+	// Non-finite float results are an error, never ±Inf/NaN.
+	mustErrIO(t, "mes(exp(1000))\n", "有限の浮動小数ではありません")
+	mustErrIO(t, "mes(pow(10, 309))\n", "有限の浮動小数ではありません")
+	mustErrIO(t, "mes(pow(-1, 0.5))\n", "有限の浮動小数ではありません")
 	// abs(MinInt64) has no representable negation; it is an error,
-	// not a wrapped negative. (MinInt64 has no int literal; it is built
-	// here by wrapping subtraction, which is existing arithmetic behavior.)
-	mustErrIO(t, "m = -9223372036854775807 - 1\nmes(abs(m))\n", "絶対値を取得できません")
+	// not a wrapped negative.
+	mustErrIO(t, "mes(abs(-9223372036854775808))\n", "絶対値を取得できません")
 	mustOutIO(t, "mes(abs(-9223372036854775807))\n", "", "9223372036854775807\n")
 	mustErrIO(t, "mes(limit(1, 9, 2))\n", "下限")
 }
@@ -152,11 +165,15 @@ func TestRandom(t *testing.T) {
 
 func TestBuiltinStrings(t *testing.T) {
 	mustOutIO(t, "mes(strlen(\"hello\"))\nmes(strlen(\"あいう\"))\nmes(strlen(\"\"))\n", "", "5\n3\n0\n")
-	mustOutIO(t, "mes(strmid(\"abcdef\", 1, 3))\nmes(strmid(\"あいうえお\", 1, 2))\nmes(strmid(\"abcdef\", -2, 2))\nmes(strmid(\"abc\", 1, 99))\n", "", "bcd\nいう\nef\nbc\n")
-	// A huge count clamps like any over-length end (start+count wraps,
-	// which used to panic the slice instead of clamping).
-	mustOutIO(t, "mes(strmid(\"abc\", 1, 9223372036854775807))\n", "", "bc\n")
-	mustOutIO(t, "mes(instr(\"hello\", \"ll\"))\nmes(instr(\"hello\", 3, \"l\"))\nmes(instr(\"hello\", \"z\"))\nmes(instr(\"hello\", 99, \"h\"))\n", "", "2\n3\n-1\n-1\n")
+	mustOutIO(t, "mes(strmid(\"abcdef\", 1, 3))\nmes(strmid(\"あいうえお\", 1, 2))\nmes(strmid(\"abcdef\", -2, 2))\nmes(strmid(\"abc\", 1, 2))\n", "", "bcd\nいう\nef\nbc\n")
+	// Over-length ends are an error, never a silent clamp (huge counts
+	// wrap start+count, which is also an error).
+	mustErrIO(t, "mes(strmid(\"abc\", 1, 99))\n", "超えています")
+	mustErrIO(t, "mes(strmid(\"abc\", 1, 9223372036854775807))\n", "超えています")
+	mustOutIO(t, "mes(instr(\"hello\", \"ll\"))\nmes(instr(\"hello\", 3, \"l\"))\nmes(instr(\"hello\", \"z\"))\n", "", "2\n3\n-1\n")
+	// Out-of-range starts are an error, never a silent clamp or -1.
+	mustErrIO(t, "mes(instr(\"hello\", 99, \"h\"))\n", "範囲外")
+	mustErrIO(t, "mes(instr(\"hello\", -1, \"h\"))\n", "範囲外")
 	mustOutIO(t, "mes(\"[\" + strtrim(\"  hi  \") + \"]\")\nmes(strtrim(\"xxhiix\", \"x\"))\nmes(strtrim(\"xxhi\", \"x\", 1))\nmes(strtrim(\"hixx\", \"x\", 2))\n", "", "[hi]\nhii\nhi\nhi\n")
 	mustOutIO(t, "a = split(\"a,b,c\", \",\")\nmes(a[1])\nmes(length(a))\n", "", "b\n3\n")
 	mustOutIO(t, "mes(strf(\"%02d\", 5))\nmes(strf(\"%s=%d\", \"n\", 7))\n", "", "05\nn=7\n")
@@ -238,6 +255,8 @@ func TestSleepEndAssertLogmes(t *testing.T) {
 	if code, ok := conc.ExitCode(); !ok || code != 3 {
 		t.Fatalf("concurrent exit code: %d, %v", code, ok)
 	}
+	// nanotime() is monotonic (process-start anchored, never backward).
+	mustOutIO(t, "a = nanotime()\nb = nanotime()\nmes(b >= a)\nmes(a >= 0)\n", "", "true\ntrue\n")
 	mustOutIO(t, "assert(true)\nassert(1 < 2, \"math broke\")\nmes(\"ok\")\n", "", "ok\n")
 	mustErrIO(t, "assert(false)\n", "assertion failed")
 	mustErrIO(t, "assert(false, \"custom\")\n", "custom")
@@ -581,7 +600,12 @@ func TestArrayExtras(t *testing.T) {
 	mustOutIO(t, "a = [\"x\", \"y\"]\nmes(find(a, \"y\"))\nmes(find(a, \"z\"))\nmes(find(a, 1))\n", "", "1\n-1\n-1\n")
 	// Chaining: sort returns the array itself.
 	mustOutIO(t, "mes(join(sort([3, 1, 2]), \"-\"))\n", "", "1-2-3\n")
-	mustErrIO(t, "sort([1, \"a\"])\n", "すべて整数かすべて文字列")
+	// sort accepts ints, floats, and mixed numerics; strings sort
+	// separately; anything else is an error.
+	mustOutIO(t, "a = [2.5, 1.5, 10]\nmes(sort(a))\n", "", "[1.5, 2.5, 10]\n")
+	mustOutIO(t, "a = [2, 1.5, 10]\nmes(sort(a))\n", "", "[1.5, 2, 10]\n")
+	mustErrIO(t, "sort([1, \"a\"])\n", "すべて数値かすべて文字列")
+	mustErrIO(t, "sort([true])\n", "すべて数値かすべて文字列")
 	mustErrIO(t, "insert([1], 5, 2)\n", "範囲外")
 	mustErrIO(t, "remove([1], 0, 2)\n", "範囲外")
 	// Huge index/count must be range errors, never a Go panic.

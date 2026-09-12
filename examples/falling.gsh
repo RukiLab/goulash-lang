@@ -11,16 +11,28 @@
 #define MAX_LOCK_RESETS 15
 
 // 配列添字
-enum P { TYPE, ROT, COL, ROW, BLOCKS }
 // → P_TYPE, P_ROT, P_COL, P_ROW, P_BLOCKS
+#define P_TYPE
+#define P_ROT
+#define P_COL
+#define P_ROW
+#define P_BLOCKS
 
 // ゲーム状態
-enum STATE { PLAY, PAUSE, GAMEOVER }
 // → STATE_PLAY, STATE_PAUSE, STATE_GAMEOVER
+#define STATE_PLAY 0
+#define STATE_PAUSE
+#define STATE_GAMEOVER
 
 // ミノの種類
-enum PIECE { I, O, T, S, Z, J, L }
 // → PIECE_I, PIECE_O, PIECE_T, PIECE_S, PIECE_Z, PIECE_J, PIECE_L
+#define PIECE_I 0
+#define PIECE_O
+#define PIECE_T
+#define PIECE_S
+#define PIECE_Z
+#define PIECE_J
+#define PIECE_L
 
 // ガイドライン準拠 落下速度テーブル (Lv 1 〜 Lv 15+) [フレーム数]
 speed_table = [60, 50, 42, 34, 27, 21, 16, 12, 9, 6, 5, 4, 3, 2, 1]

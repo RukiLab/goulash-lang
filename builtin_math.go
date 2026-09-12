@@ -10,14 +10,19 @@ import (
 )
 
 func init() {
-	// int(v): float truncates toward zero; numeric strings parse;
-	// bool maps to 1/0. Anything else is an error.
+	// int(v): float truncates toward zero (finite, in int64 range);
+	// strings must be base-10 integers; bool maps to 1/0.
+	// Anything else is an error.
 	register("int", 1, 1, func(in *Interp, args []Value, at Pos) (Value, error) {
 		switch args[0].K {
 		case KInt:
 			return args[0], nil
 		case KFloat:
-			return Int(int64(args[0].F)), nil
+			f := args[0].F
+			if math.IsNaN(f) || f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
+				return Null(), argErr("int", 0, at, "%g を整数に変換できません", f)
+			}
+			return Int(int64(f)), nil
 		case KBool:
 			if args[0].B {
 				return Int(1), nil
@@ -28,15 +33,13 @@ func init() {
 			if v, err := strconv.ParseInt(s, 10, 64); err == nil {
 				return Int(v), nil
 			}
-			if f, err := strconv.ParseFloat(s, 64); err == nil {
-				return Int(int64(f)), nil
-			}
 			return Null(), argErr("int", 0, at, "%q を整数に変換できません", args[0].S)
 		}
 		return Null(), argErr("int", 0, at, "%s を整数に変換できません", typeNameOf(args[0]))
 	})
 
-	// float(v): int widens; numeric strings parse; bool maps to 1.0/0.0.
+	// float(v): int widens; numeric strings parse (finite only);
+	// bool maps to 1.0/0.0.
 	register("float", 1, 1, func(in *Interp, args []Value, at Pos) (Value, error) {
 		switch args[0].K {
 		case KFloat:
@@ -51,6 +54,9 @@ func init() {
 		case KString:
 			s := strings.TrimSpace(args[0].S)
 			if f, err := strconv.ParseFloat(s, 64); err == nil {
+				if math.IsNaN(f) || math.IsInf(f, 0) {
+					return Null(), argErr("float", 0, at, "%q を浮動小数に変換できません", args[0].S)
+				}
 				return Float(f), nil
 			}
 			return Null(), argErr("float", 0, at, "%q を浮動小数に変換できません", args[0].S)
@@ -129,7 +135,7 @@ func init() {
 		if err != nil {
 			return Null(), err
 		}
-		return Float(math.Exp(f)), nil
+		return finiteMath("exp", math.Exp(f), at)
 	})
 	register("log", 1, 1, func(in *Interp, args []Value, at Pos) (Value, error) {
 		f, err := needFloat("log", args, 0, at)
@@ -152,7 +158,7 @@ func init() {
 		if err != nil {
 			return Null(), err
 		}
-		return Float(math.Pow(b, e)), nil
+		return finiteMath("pow", math.Pow(b, e), at)
 	})
 
 	// limit(v, lo, hi): clamp into range. All-int inputs clamp in
@@ -288,8 +294,17 @@ func trigFn(name string, fn func(float64) float64) builtinFn {
 		if err != nil {
 			return Null(), err
 		}
-		return Float(fn(f)), nil
+		return finiteMath(name, fn(f), at)
 	}
+}
+
+// finiteMath rejects non-finite float results: NaN and ±Inf can never
+// appear in a value, so producing one is always an error.
+func finiteMath(name string, f float64, at Pos) (Value, error) {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return Null(), argErr(name, 0, at, "計算結果が有限の浮動小数ではありません")
+	}
+	return Float(f), nil
 }
 
 // scriptRand is the script-visible random source (reseeded by randomize).

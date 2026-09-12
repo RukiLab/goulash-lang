@@ -219,15 +219,19 @@ func init() {
 	})
 }
 
-// sortElems sorts all-int or all-string elements (stable).
+// sortElems sorts numeric (int/float mixed) or all-string elements
+// (stable). Anything else is an error.
 func sortElems(elems []Value) error {
 	if len(elems) == 0 {
 		return nil
 	}
-	allInt, allString := true, true
+	allInt, allNum, allString := true, true, true
 	for _, e := range elems {
 		if e.K != KInt {
 			allInt = false
+		}
+		if e.K != KInt && e.K != KFloat {
+			allNum = false
 		}
 		if e.K != KString {
 			allString = false
@@ -236,10 +240,12 @@ func sortElems(elems []Value) error {
 	switch {
 	case allInt:
 		sort.SliceStable(elems, func(i, j int) bool { return elems[i].I < elems[j].I })
+	case allNum:
+		sort.SliceStable(elems, func(i, j int) bool { return toFloat(elems[i]) < toFloat(elems[j]) })
 	case allString:
 		sort.SliceStable(elems, func(i, j int) bool { return elems[i].S < elems[j].S })
 	default:
-		return fmt.Errorf("要素はすべて整数かすべて文字列である必要があります")
+		return fmt.Errorf("要素はすべて数値かすべて文字列である必要があります")
 	}
 	return nil
 }

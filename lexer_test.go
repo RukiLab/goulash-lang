@@ -136,10 +136,35 @@ func TestLexErrors(t *testing.T) {
 		// operators now (see TestParseBitwisePrecedence).
 		"'x'", "\"unterminated", "/* nope",
 		"\"bad \\q escape\"", "x = 1e",
+		// Malformed numbers: trailing dot, glued letters/underscores.
+		"3.", "1_000", "123abc", "0d5", "3.14x", "10else",
 	} {
 		if _, err := Lex(src); err == nil {
 			t.Errorf("Lex(%q): expected error, got nil", src)
 		}
+	}
+}
+
+func TestLexNulRejected(t *testing.T) {
+	// Raw NUL bytes are never valid source text (the `\0` escape is
+	// the only way to spell one): in code, strings, and comments.
+	for _, src := range []string{
+		"x = 1\x00\n",
+		"\"ab\x00cd\"",
+		"// com\x00ment\n",
+		"/* bl\x00ock */",
+	} {
+		if _, err := Lex(src); err == nil {
+			t.Errorf("Lex(%q): expected NUL error, got nil", src)
+		}
+	}
+	// The escape still works.
+	toks, err := Lex("\"a\\0b\"")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if toks[0].Lit != "a\x00b" {
+		t.Fatalf("escape: got %q", toks[0].Lit)
 	}
 }
 

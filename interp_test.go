@@ -158,6 +158,63 @@ func TestCompoundAssign(t *testing.T) {
 	mustErr(t, "x = 1\nx += true\n", "加算できません")
 	mustErr(t, "x = 1.5\nx &= 1\n", "整数が必要です")
 	mustErr(t, "x = 1\nx /= 0\n", "0 による除算")
+	// Single evaluation: the index expression runs exactly once.
+	mustOut(t, "i = 0\ndef next() {\ni = i + 1\nreturn 0\n}\na = [5]\na[next()] += 10\nmes(i)\nmes(a[0])\n", "1\n15\n")
+	mustOut(t, "i = 0\ndef next() {\ni = i + 1\nreturn 0\n}\nm = [[7]]\nm[next()][0] *= 2\nmes(i)\nmes(m[0][0])\n", "1\n14\n")
+	mustErr(t, "x += 1\n", "未定義の変数")
+	mustErr(t, "mes += 1\n", "組み込み関数")
+}
+
+func TestMinInt64Literal(t *testing.T) {
+	// -9223372036854775808 folds to MinInt64 (the positive half
+	// overflows int64, so it has no bare literal).
+	mustOut(t, "mes(-9223372036854775808)\n", "-9223372036854775808\n")
+	mustOut(t, "mes(-0x8000000000000000)\n", "-9223372036854775808\n")
+	mustOut(t, "m = -9223372036854775808\nmes(m == -9223372036854775808)\nmes(m < 0)\n", "true\ntrue\n")
+	mustErr(t, "mes(9223372036854775808)\n", "不正な整数リテラル")
+	mustErr(t, "mes(0x8000000000000000)\n", "不正な整数リテラル")
+	// Integer arithmetic wraps (Go-like); only abs() refuses MinInt64.
+	mustOut(t, "mes(9223372036854775807 + 1)\n", "-9223372036854775808\n")
+	mustOut(t, "mes(-(-9223372036854775808))\n", "-9223372036854775808\n")
+}
+
+func TestFiniteFloats(t *testing.T) {
+	// Overflowing float arithmetic is an error, never ±Inf.
+	mustErr(t, "mes(1e308 * 10)\n", "有限ではありません")
+	mustErr(t, "mes(1e308 + 1e308)\n", "有限ではありません")
+	mustErr(t, "mes(1e308 / 1e-308)\n", "有限ではありません")
+	// Ordinary floats are unaffected.
+	mustOut(t, "mes(0.1 + 0.2 == 0.30000000000000004)\n", "true\n")
+}
+
+func TestHardeningTraps(t *testing.T) {
+	// String concatenation no longer resurrects void as "null".
+	mustErr(t, "def f() {\n}\nmes(\"a\" + f())\n", "void値を使用できません")
+	// Builtin names cannot be assigned (they would shadow the builtin).
+	mustErr(t, "mes = 1\n", "組み込み関数")
+	mustErr(t, "length = 1\n", "組み込み関数")
+	// User functions cannot be redefined.
+	mustErr(t, "def f() {\n}\ndef f() {\n}\n", "既に定義されています")
+	// switch case values reject void like the scrutinee does.
+	mustErr(t, "def f() {\n}\nswitch 1 {\ncase f() {\nmes(\"x\")\n}\n}\n", "void値を使用できません")
+}
+
+func TestRecursionLimit(t *testing.T) {
+	mustErr(t, "def boom() {\nreturn boom()\n}\nmes(boom())\n", "深すぎます")
+	// Sanity: ordinary recursion still works.
+	mustOut(t, "def fact(n) {\nif n <= 1 {\nreturn 1\n}\nreturn n * fact(n - 1)\n}\nmes(fact(10))\n", "3628800\n")
+}
+
+func TestParseDepthLimit(t *testing.T) {
+	// 500-deep nesting parses; 1100-deep is rejected (host stack guard).
+	shallow := strings.Repeat("if true {\n", 500) + "mes(1)\n" + strings.Repeat("}\n", 500)
+	mustOut(t, shallow, "1\n")
+	deep := strings.Repeat("if true {\n", 1100) + "mes(1)\n" + strings.Repeat("}\n", 1100)
+	mustErr(t, deep, "ネストが深すぎます")
+	shallowExpr := strings.Repeat("(", 500) + "1" + strings.Repeat(")", 500) + "\n"
+	mustOut(t, "mes"+shallowExpr, "1\n")
+	deepExpr := strings.Repeat("(", 1100) + "1" + strings.Repeat(")", 1100) + "\n"
+	mustErr(t, "mes"+deepExpr, "ネストが深すぎます")
 }
 
 func TestTryCatchAbolished(t *testing.T) {

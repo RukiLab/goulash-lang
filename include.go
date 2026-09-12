@@ -386,6 +386,11 @@ func parseDirective(line string) (*directive, error) {
 		if !isDefineName(name) {
 			return nil, fmt.Errorf("不正な #define ディレクティブです（#define NAME [値] が必要です）")
 		}
+		// Keyword/builtin names would define dead macros (keywords never
+		// match TokIdent) or hijack builtin calls: reject them outright.
+		if _, isKw := keywords[name]; isKw || isBuiltin(name) {
+			return nil, fmt.Errorf("#define %q は使用できません：キーワード・真偽値・組み込み関数と同名です", name)
+		}
 		// An empty value auto-numbers (resolved at collection).
 		return &directive{kind: dirDefine, arg: name, rest: value}, nil
 	case "ifdef", "ifndef":

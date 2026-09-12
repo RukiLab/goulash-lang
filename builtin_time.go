@@ -12,6 +12,9 @@ import (
 // endSignal unwinds to Run, which then reports the requested exit code.
 type endSignal struct{}
 
+// procStart anchors nanotime() to the monotonic clock.
+var procStart = time.Now()
+
 func init() {
 	// gettime(t): 0 year, 1 month (1-12), 2 weekday (0=Sunday..6=Saturday),
 	// 3 day, 4 hour, 5 minute, 6 second, 7 millisecond.
@@ -42,10 +45,11 @@ func init() {
 		return Null(), argErr("gettime", 0, at, "type は 0 から 7 の範囲で指定してください。%d が指定されました", t)
 	})
 
-	// nanotime(): monotonic nanoseconds (for benchmarking; wall-clock
-	// milliseconds come from gettime(7)).
+	// nanotime(): monotonic nanoseconds since process start (for
+	// benchmarking; wall-clock milliseconds come from gettime(7)).
+	// time.Since uses the monotonic clock, so this never goes backward.
 	register("nanotime", 0, 0, func(in *Interp, args []Value, at Pos) (Value, error) {
-		return Int(time.Now().UnixNano()), nil
+		return Int(time.Since(procStart).Nanoseconds()), nil
 	})
 
 	// sleep(ms): pause for milliseconds (replaces HSP's centisecond wait).

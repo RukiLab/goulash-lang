@@ -217,6 +217,10 @@ func TestDefineErrors(t *testing.T) {
 		"#define M x\n",              // identifier is not a literal
 		"#define 1X 2\n",             // bad name
 		"#define X 1\n#define X 2\n", // redefinition
+		"#define if 1\n",             // keywords cannot be defined
+		"#define true 1\n",           // true/false cannot be defined
+		"#define mes 1\n",            // builtins cannot be hijacked
+		"#define length\n",           // valueless builtins cannot either
 	} {
 		if _, err := runParsePP(src); err == nil {
 			t.Fatalf("src %q: want define error, got nil", src)

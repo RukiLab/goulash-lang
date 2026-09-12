@@ -90,6 +90,21 @@ func (n *AssignStmt) String() string {
 	return fmt.Sprintf("%s = %s", n.Target.String(), n.Value.String())
 }
 
+// CompoundAssignStmt is `target op= value` (e.g. `x += 1`). Unlike the
+// old desugar, the target address is evaluated exactly once.
+type CompoundAssignStmt struct {
+	Target Expr
+	Op     TokenType // binary operator (TokPlus, TokMinus, ...)
+	Value  Expr
+	At     Pos
+}
+
+func (n *CompoundAssignStmt) Pos() Pos  { return n.At }
+func (n *CompoundAssignStmt) stmtNode() {}
+func (n *CompoundAssignStmt) String() string {
+	return fmt.Sprintf("%s %s= %s", n.Target.String(), opSymbol(n.Op), n.Value.String())
+}
+
 type ExprStmt struct {
 	X  Expr
 	At Pos

@@ -4,6 +4,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,7 +20,18 @@ import (
 //     or push(); out-of-range and missing bases are errors, never
 //     auto-created.
 //   - `b = a` shares the array (reference semantics).
-//   - `+` with either side a string concatenates via stringify.
+//   - `+` with either side a string concatenates via stringify (void
+//     operands are an error, like everywhere else).
+//   - Int `+ - *`, unary `-`, and `<<` wrap on overflow (only
+//     abs(MinInt64) is an error); `-9223372036854775808` folds to MinInt64.
+//   - NaN and ±Inf never appear in values: overflowing float arithmetic,
+//     exp/pow overflow, float("nan"/"inf"), and out-of-range int()
+//     conversions are all errors.
+//   - Compound assignment evaluates its target address exactly once.
+//   - Assignment inside a function updates the visible scope holding the
+//     name, or creates a call-local when new (documented, VM must resolve
+//     the store target at runtime).
+//   - Recursion is capped at maxCallDepth; source nesting at maxParseDepth.
 
 // RuntimeError is an execution error with source position.
 type RuntimeError struct {
@@ -108,7 +120,13 @@ type Interp struct {
 	// User functions by name. Functions are not values: def registers
 	// here, never in an environment.
 	funcs map[string]*FuncVal
+	// Current user-function call depth (bounded by maxCallDepth).
+	depth int
 }
+
+// maxCallDepth caps user-function recursion: exceeding it is a runtime
+// error instead of a host stack overflow.
+const maxCallDepth = 10000
 
 // NewInterp creates an interpreter writing output to out and reading input
 // from os.Stdin.
@@ -248,6 +266,15 @@ func (in *Interp) execStmt(s Stmt, env *Env) error {
 			return err
 		}
 		return in.assign(n.Target, v, env)
+	case *CompoundAssignStmt:
+		v, err := in.evalExpr(n.Value, env)
+		if err != nil {
+			return err
+		}
+		if err := requireValue(v, n.Value.Pos()); err != nil {
+			return err
+		}
+		return in.assignCompound(n.Target, n.Op, v, env, n.At)
 	case *DefStmt:
 		seen := map[string]bool{}
 		for _, p := range n.Params {
@@ -258,6 +285,9 @@ func (in *Interp) execStmt(s Stmt, env *Env) error {
 		}
 		if isBuiltin(n.Name) {
 			return rtErrf(n.At, "%q を再定義できません：組み込み関数です", n.Name)
+		}
+		if _, ok := in.funcs[n.Name]; ok {
+			return rtErrf(n.At, "関数 %q は既に定義されています", n.Name)
 		}
 		// Top-level only (enforced by the parser), so no closure and
 		// no scope juggling: register by name.
@@ -487,6 +517,9 @@ outer:
 			if err != nil {
 				return err
 			}
+			if err := requireValue(cv, vx.Pos()); err != nil {
+				return err
+			}
 			if valuesEqual(v, cv) {
 				body = c.Body
 				break outer
@@ -523,11 +556,120 @@ func (in *Interp) assign(target Expr, v Value, env *Env) error {
 	}
 	switch t := target.(type) {
 	case *VarExpr:
+		if isBuiltin(t.Name) {
+			return rtErrf(t.At, "%q に代入できません：組み込み関数です", t.Name)
+		}
 		return env.Assign(t.Name, v, t.At)
 	case *IndexExpr:
 		return in.assignIndex(t, v, env)
 	}
 	return rtErrf(target.Pos(), "'=' の左辺に代入できません")
+}
+
+// assignCompound implements `target op= value` with single evaluation:
+// the target address is resolved once, then read, combined, and stored.
+func (in *Interp) assignCompound(target Expr, op TokenType, rhs Value, env *Env, at Pos) error {
+	switch t := target.(type) {
+	case *VarExpr:
+		if isBuiltin(t.Name) {
+			return rtErrf(t.At, "%q に代入できません：組み込み関数です", t.Name)
+		}
+		cur, ok := env.Lookup(t.Name)
+		if !ok {
+			return rtErrf(t.At, "未定義の変数 %q です", t.Name)
+		}
+		res, err := applyBinary(op, cur, rhs, at)
+		if err != nil {
+			return err
+		}
+		if err := requireValue(res, at); err != nil {
+			return err
+		}
+		return env.Assign(t.Name, res, t.At)
+	case *IndexExpr:
+		return in.assignCompoundIndex(t, op, rhs, env, at)
+	}
+	return rtErrf(target.Pos(), "'=' の左辺に代入できません")
+}
+
+// assignCompoundIndex resolves a (possibly nested) index target exactly
+// once per sub-expression: outer index, then inward base and index,
+// mirroring assignIndex order without re-evaluation.
+func (in *Interp) assignCompoundIndex(t *IndexExpr, op TokenType, rhs Value, env *Env, at Pos) error {
+	// Collect index targets outside-in; chain[i].Index pairs with chain[i].
+	var chain []*IndexExpr
+	for node := t; ; {
+		chain = append(chain, node)
+		base, ok := node.Base.(*IndexExpr)
+		if !ok {
+			break
+		}
+		node = base
+	}
+	// Evaluate indexes outside-in, then the root base.
+	idxs := make([]int64, len(chain))
+	for i, node := range chain {
+		v, err := in.evalExpr(node.Index, env)
+		if err != nil {
+			return err
+		}
+		if v.K != KInt {
+			return rtErrf(node.Index.Pos(), "配列のインデックスは整数である必要があります。%s が指定されました", typeNameOf(v))
+		}
+		idxs[i] = v.I
+	}
+	root, err := in.evalExpr(chain[len(chain)-1].Base, env)
+	if err != nil {
+		return err
+	}
+	// Walk inward: intermediate levels share the nested assignIndex
+	// diagnostics; the outermost level uses the setIndex diagnostics.
+	cur := root
+	for i := len(chain) - 1; i >= 0; i-- {
+		node := chain[i]
+		arr, err := in.indexBaseForWrite(node, cur, env)
+		if err != nil {
+			return err
+		}
+		idx := idxs[i]
+		if i > 0 {
+			if idx < 0 || int(idx) >= len(arr.Elems) {
+				return rtErrf(node.At, "インデックス %d は範囲外です（長さ %d）", idx, len(arr.Elems))
+			}
+			cur = arr.Elems[int(idx)]
+			continue
+		}
+		if idx < 0 {
+			return rtErrf(node.Index.Pos(), "配列のインデックスは 0 以上である必要があります。%d が指定されました", idx)
+		}
+		if int(idx) >= len(arr.Elems) {
+			return rtErrf(node.At, "インデックス %d は範囲外です（長さ %d）", idx, len(arr.Elems))
+		}
+		res, err := applyBinary(op, arr.Elems[int(idx)], rhs, at)
+		if err != nil {
+			return err
+		}
+		if err := requireValue(res, at); err != nil {
+			return err
+		}
+		return setIndex(arr, int(idx), res, node.At)
+	}
+	return rtErrf(at, "内部エラー：不正な複合代入です")
+}
+
+// applyBinary runs one of the compound-assignable binary operators.
+func applyBinary(op TokenType, l, r Value, at Pos) (Value, error) {
+	switch op {
+	case TokPlus:
+		return add(l, r, at)
+	case TokMinus, TokStar, TokSlash, TokMod:
+		return arith(op, l, r, at)
+	case TokBitAnd, TokBitOr, TokBitXor:
+		return bitwise(op, l, r, at)
+	case TokShl, TokShr:
+		return shift(op, l, r, at)
+	}
+	return Null(), rtErrf(at, "内部エラー：不正な二項演算子です")
 }
 
 func (in *Interp) assignIndex(t *IndexExpr, v Value, env *Env) error {
@@ -763,6 +905,12 @@ func (in *Interp) callFunc(fn *FuncVal, args []Value, at Pos) (v Value, err erro
 	if len(args) != len(fn.Params) {
 		return Null(), rtErrf(at, "関数 %s は引数を %d 個必要としますが、%d 個が渡されました", fn.Name, len(fn.Params), len(args))
 	}
+	in.depth++
+	if in.depth > maxCallDepth {
+		in.depth--
+		return Null(), rtErrf(at, "関数の呼び出しが深すぎます（上限 %d）", maxCallDepth)
+	}
+	defer func() { in.depth-- }()
 	// No closure: top-level functions see globals as their parent scope.
 	callEnv := NewEnv(in.globals)
 	for i, p := range fn.Params {
@@ -842,14 +990,9 @@ func (in *Interp) evalBinary(n *BinaryExpr, env *Env) (Value, error) {
 		return Bool(!valuesEqual(l, r)), nil
 	case TokLt, TokLtEq, TokGt, TokGtEq:
 		return compare(n.Op, l, r, n.At)
-	case TokPlus:
-		return add(l, r, n.At)
-	case TokMinus, TokStar, TokSlash, TokMod:
-		return arith(n.Op, l, r, n.At)
-	case TokBitAnd, TokBitOr, TokBitXor:
-		return bitwise(n.Op, l, r, n.At)
-	case TokShl, TokShr:
-		return shift(n.Op, l, r, n.At)
+	case TokPlus, TokMinus, TokStar, TokSlash, TokMod,
+		TokBitAnd, TokBitOr, TokBitXor, TokShl, TokShr:
+		return applyBinary(n.Op, l, r, n.At)
 	}
 	return Null(), rtErrf(n.At, "内部エラー：不正な二項演算子です")
 }
@@ -908,13 +1051,29 @@ func compare(op TokenType, l, r Value, at Pos) (Value, error) {
 	return Null(), rtErrf(at, "内部エラー：不正な比較演算子です")
 }
 
+// finiteFloat rejects non-finite float results: NaN and ±Inf can never
+// appear in a value (literals, division, and math builtins all refuse
+// them), so producing one is always an error, never a value.
+func finiteFloat(f float64, at Pos) (Value, error) {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return Null(), rtErrf(at, "浮動小数の計算結果が有限ではありません（±Inf・NaN は使用できません）")
+	}
+	return Float(f), nil
+}
+
 func add(l, r Value, at Pos) (Value, error) {
+	if err := requireValue(l, at); err != nil {
+		return Null(), err
+	}
+	if err := requireValue(r, at); err != nil {
+		return Null(), err
+	}
 	if l.K == KString || r.K == KString {
 		return Str(Stringify(l) + Stringify(r)), nil
 	}
 	if isNum(l) && isNum(r) {
 		if l.K == KFloat || r.K == KFloat {
-			return Float(toFloat(l) + toFloat(r)), nil
+			return finiteFloat(toFloat(l)+toFloat(r), at)
 		}
 		return Int(l.I + r.I), nil
 	}
@@ -923,7 +1082,7 @@ func add(l, r Value, at Pos) (Value, error) {
 
 func arith(op TokenType, l, r Value, at Pos) (Value, error) {
 	if !isNum(l) || !isNum(r) {
-		return Null(), rtErrf(at, "演算子 %s は数値が必要です。%s と %s が指定されました", string(op), typeNameOf(l), typeNameOf(r))
+		return Null(), rtErrf(at, "演算子 %s は数値が必要です。%s と %s が指定されました", opSymbol(op), typeNameOf(l), typeNameOf(r))
 	}
 	if op == TokMod {
 		if l.K != KInt || r.K != KInt {
@@ -938,14 +1097,14 @@ func arith(op TokenType, l, r Value, at Pos) (Value, error) {
 		lf, rf := toFloat(l), toFloat(r)
 		switch op {
 		case TokMinus:
-			return Float(lf - rf), nil
+			return finiteFloat(lf-rf, at)
 		case TokStar:
-			return Float(lf * rf), nil
+			return finiteFloat(lf*rf, at)
 		case TokSlash:
 			if rf == 0 {
 				return Null(), rtErrf(at, "0 による除算です")
 			}
-			return Float(lf / rf), nil
+			return finiteFloat(lf/rf, at)
 		}
 	}
 	switch op {
