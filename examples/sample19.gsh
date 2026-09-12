@@ -1,5 +1,5 @@
 #mode cli
-// HSP後継言語 v0.1 サンプル (§19)
+// HSP後継言語 v0.2 サンプル (§19)
 def greet(p) {
     mes("Hello, " + p[0])
 }

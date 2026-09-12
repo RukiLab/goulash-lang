@@ -1,4 +1,4 @@
-// Command-line interface for the Goulash language v0.1 interpreter.
+// Command-line interface for the Goulash language v0.2 interpreter.
 //
 // Usage:
 //
@@ -22,7 +22,7 @@ import (
 	"gsh/gui"
 )
 
-const usage = `gsh: Goulash v0.1 インタプリタ
+const usage = `gsh: Goulash v0.2 インタプリタ
 
 使い方:
   gsh run <file.gsh> [--keep] [--gui] [--cui] [-- args...]   スクリプトを実行します
@@ -247,7 +247,7 @@ func cmdParse(args []string) {
 }
 
 func cmdRepl() {
-	fmt.Println("Goulash v0.1 REPL (type \"exit\" to quit)")
+	fmt.Println("Goulash v0.2 REPL (type \"exit\" to quit)")
 	in := NewInterp(os.Stdout)
 	// NOTE: the REPL reads through the interpreter Backend so input()
 	// shares the same stdin reader instead of competing with it.

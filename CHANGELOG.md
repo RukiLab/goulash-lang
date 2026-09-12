@@ -1,6 +1,6 @@
 # CHANGELOG
 
-Goulash 処理系の変更履歴です。v0.1 は未リリースのため、すべて Unreleased 扱いです。
+Goulash 処理系の変更履歴です。v0.2 は未リリースのため、すべて Unreleased 扱いです。
 
 ## [Unreleased]
 

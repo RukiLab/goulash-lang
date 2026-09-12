@@ -1,4 +1,4 @@
-// Tree-walk interpreter for HSP successor language v0.1.
+// Tree-walk interpreter for HSP successor language v0.2.
 package main
 
 import (
@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 )
 
-// Decisions (v0.1):
+// Decisions (v0.2):
 //   - `/` on two ints is truncating integer division (Go-like); any float
 //     operand yields a float. `%` accepts ints only.
 //   - Conditions are strictly bool; `if 1` is an error.

@@ -1,4 +1,4 @@
-// Preprocessor (#include, #define, conditionals) for Goulash v0.1.
+// Preprocessor (#include, #define, conditionals) for Goulash v0.2.
 //
 // A directive is a whole line whose first non-space character is `#`.
 // Supported directives (minimal set):
