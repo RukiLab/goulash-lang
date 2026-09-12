@@ -128,10 +128,14 @@ func init() {
 	})
 
 	// logmes(args...): mes-style output to the error stream (debugging).
+	// Void arguments are skipped silently, like mes()/print().
 	register("logmes", 0, -1, func(in *Interp, args []Value, at Pos) (Value, error) {
-		parts := make([]string, len(args))
-		for i, a := range args {
-			parts[i] = Stringify(a)
+		parts := make([]string, 0, len(args))
+		for _, a := range args {
+			if a.K == KNull {
+				continue
+			}
+			parts = append(parts, Stringify(a))
 		}
 		fmt.Fprintln(in.errOut, strings.Join(parts, " "))
 		return Null(), nil

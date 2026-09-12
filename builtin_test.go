@@ -249,6 +249,14 @@ func TestSleepEndAssertLogmes(t *testing.T) {
 	if errout != "dbg 42\n" {
 		t.Fatalf("logmes got %q", errout)
 	}
+	// Void arguments are skipped, like mes()/print().
+	_, errout, _, err = runIO(t, "def f() {\n}\nlogmes(\"a\", f(), \"b\")\n", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errout != "a b\n" {
+		t.Fatalf("logmes void got %q", errout)
+	}
 }
 
 func TestArgs(t *testing.T) {

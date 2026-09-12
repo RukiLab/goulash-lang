@@ -716,9 +716,9 @@ func (in *Interp) evalCall(n *CallExpr, env *Env) (Value, error) {
 				if err != nil {
 					return Null(), err
 				}
-				// mes()/print() tolerate void (they skip it);
+				// Output builtins tolerate void (they skip it);
 				// every other builtin rejects it here.
-				if v.Name != "mes" && v.Name != "print" {
+				if v.Name != "mes" && v.Name != "print" && v.Name != "logmes" {
 					if err := requireValue(ev, a.Pos()); err != nil {
 						return Null(), err
 					}
