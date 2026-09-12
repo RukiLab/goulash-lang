@@ -22,7 +22,11 @@ import (
 	"gsh/gui"
 )
 
-const usage = `gsh: Goulash v0.2 インタプリタ
+// goulashVersion は処理系の版です。版上げはこの1箇所だけ変えます。
+// usage と REPL バナーはここから組み立てられます。
+const goulashVersion = "0.2"
+
+var usage = `gsh: Goulash v` + goulashVersion + ` インタプリタ
 
 使い方:
   gsh run <file.gsh> [--keep] [--gui] [--cui] [-- args...]   スクリプトを実行します
@@ -247,7 +251,7 @@ func cmdParse(args []string) {
 }
 
 func cmdRepl() {
-	fmt.Println("Goulash v0.2 REPL (type \"exit\" to quit)")
+	fmt.Println("Goulash v" + goulashVersion + " REPL (type \"exit\" to quit)")
 	in := NewInterp(os.Stdout)
 	// NOTE: the REPL reads through the interpreter Backend so input()
 	// shares the same stdin reader instead of competing with it.

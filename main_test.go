@@ -2,8 +2,16 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
+
+func TestVersionWiring(t *testing.T) {
+	// usage と REPL バナーが単一の版定数から組み立てられていること。
+	if !strings.Contains(usage, "v"+goulashVersion) {
+		t.Fatalf("usage %q lacks version v%s", usage, goulashVersion)
+	}
+}
 
 func TestEnginePanicMsg(t *testing.T) {
 	// Only the first line survives (no stack dump).
