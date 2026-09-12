@@ -55,7 +55,7 @@ func TestBuiltinRegistryComplete(t *testing.T) {
 	want := []string{
 		"mes", "print", "cls", "color", "title", "pos", "input",
 		"int", "float", "str", "vartype", "length",
-		"abs", "sqrt", "sin", "cos", "tan", "atan", "exp", "log", "pow", "limit",
+		"abs", "sqrt", "sin", "cos", "tan", "atan", "exp", "log", "pow", "limit", "min", "max",
 		"rnd", "randomize",
 		"strlen", "strmid", "instr", "strtrim", "split", "strf", "getpath",
 		"gettime", "sleep", "await", "tick", "nanotime", "end", "assert", "throw", "logmes", "exec", "args",
@@ -109,14 +109,22 @@ func TestMath(t *testing.T) {
 	mustOutIO(t, "mes(abs(-5))\nmes(abs(5.5))\nmes(abs(0))\n", "", "5\n5.5\n0\n")
 	mustOutIO(t, "mes(sqrt(16))\nmes(sin(0))\nmes(cos(0))\nmes(pow(2, 10))\nmes(exp(0))\nmes(log(1))\n", "", "4\n0\n1\n1024\n1\n0\n")
 	mustOutIO(t, "mes(limit(5, 0, 10))\nmes(limit(-3, 0, 10))\nmes(limit(99, 0, 10))\nmes(limit(5.5, 0, 10))\n", "", "5\n0\n10\n5.5\n")
-	mustOutIO(t, "mes(limit(5))\nmes(limit(-3, 0))\nmes(limit(99, 0))\nmes(limit(5.5))\nmes(limit(-1.5, 0.5))\n", "", "5\n0\n99\n5.5\n0.5\n")
-	mustOutIO(t, "mes(vartype(limit(5)))\nmes(vartype(limit(5.0)))\nmes(vartype(limit(5, 0)))\n", "", "int\nfloat\nint\n")
-	// Elided middle argument (,,) is null, which limit reads as default.
-	mustOutIO(t, "mes(limit(5, , 10))\nmes(limit(99, , 10))\nmes(limit(-3, , -5))\nmes(limit(5, 0, ))\n", "", "5\n10\n-5\n5\n")
-	mustOutIO(t, "mes(vartype(limit(5, , 10)))\nmes(limit(5.5, , 10.5))\n", "", "int\n5.5\n")
+	mustOutIO(t, "mes(vartype(limit(5, 0, 10)))\nmes(vartype(limit(5.5, 0, 10)))\n", "", "int\nfloat\n")
+	// limit() takes exactly 3 arguments: shorter forms and elision fail.
+	mustErrIO(t, "mes(limit(5))\n", "3 個必要")
+	mustErrIO(t, "mes(limit(5, 0))\n", "3 個必要")
+	mustErrIO(t, "mes(limit(1, 2, 3, 4))\n", "3 個必要")
+	mustErrIO(t, "mes(limit(5, , 10))\n", "数値である必要があります")
 	mustErrIO(t, "mes(limit(, 0, 10))\n", "数値である必要があります")
-	// Elision is null everywhere else (strict builtins reject it).
+	// Elision is still null elsewhere.
 	mustOutIO(t, "mes(,)\n", "", "null\n")
+	// min/max: least/greatest of 2+ args; all-int yields int.
+	mustOutIO(t, "mes(min(3, 1, 2))\nmes(max(3, 1, 2))\nmes(min(-5, -2))\nmes(max(-5, -2))\nmes(min(7, 7))\n", "", "1\n3\n-5\n-2\n7\n")
+	mustOutIO(t, "mes(min(1.5, 2))\nmes(max(1, 2.5))\nmes(min(3, 1.5, 2))\n", "", "1.5\n2.5\n1.5\n")
+	mustOutIO(t, "mes(vartype(min(1, 2)))\nmes(vartype(max(1.0, 2)))\n", "", "int\nfloat\n")
+	mustErrIO(t, "mes(min(1))\n", "少なくとも 2 個")
+	mustErrIO(t, "mes(max())\n", "少なくとも 2 個")
+	mustErrIO(t, "mes(min(\"a\", 1))\n", "数値である必要があります")
 	mustOutIO(t, "mes(atan(0))\nmes(tan(0))\n", "", "0\n0\n")
 	mustErrIO(t, "mes(sqrt(-1))\n", "平方根")
 	mustErrIO(t, "mes(log(0))\n", "正の数")

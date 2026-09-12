@@ -155,36 +155,21 @@ func init() {
 		return Float(math.Pow(b, e)), nil
 	})
 
-	// limit(v [, lo [, hi]]): clamp into range. Omitted lo/hi are
-	// the type minimum/maximum (so limit(v) is identity); an elided
-	// argument (limit(v, , hi)) is null, which also means default.
-	// All-int-or-null inputs clamp in int64 and yield int; otherwise
-	// float64.
-	register("limit", 1, 3, func(in *Interp, args []Value, at Pos) (Value, error) {
-		// v itself has no default (elided v is an error).
-		if _, err := needFloat("limit", args, 0, at); err != nil {
-			return Null(), err
-		}
+	// limit(v, lo, hi): clamp into range. All-int inputs clamp in
+	// int64 and yield int; otherwise float64.
+	register("limit", 3, 3, func(in *Interp, args []Value, at Pos) (Value, error) {
 		intPath := true
 		for _, a := range args {
-			if a.K != KInt && a.K != KNull {
+			if a.K != KInt {
 				intPath = false
 				break
 			}
 		}
 		if intPath {
-			lo := int64(math.MinInt64)
-			hi := int64(math.MaxInt64)
-			if len(args) >= 2 && args[1].K == KInt {
-				lo = args[1].I
-			}
-			if len(args) == 3 && args[2].K == KInt {
-				hi = args[2].I
-			}
+			lo, hi, c := args[1].I, args[2].I, args[0].I
 			if lo > hi {
 				return Null(), rtErrf(at, "limit：下限 %d が上限 %d を超えています", lo, hi)
 			}
-			c := args[0].I
 			if c < lo {
 				c = lo
 			}
@@ -193,28 +178,18 @@ func init() {
 			}
 			return Int(c), nil
 		}
-		nums := make([]float64, len(args))
+		nums := make([]float64, 3)
 		for i := range args {
-			if args[i].K == KNull {
-				continue // default below
-			}
 			f, err := needFloat("limit", args, i, at)
 			if err != nil {
 				return Null(), err
 			}
 			nums[i] = f
 		}
-		lo, hi := math.Inf(-1), math.Inf(1)
-		if len(args) >= 2 && args[1].K != KNull {
-			lo = nums[1]
-		}
-		if len(args) == 3 && args[2].K != KNull {
-			hi = nums[2]
-		}
+		lo, hi, c := nums[1], nums[2], nums[0]
 		if lo > hi {
 			return Null(), rtErrf(at, "limit：下限 %g が上限 %g を超えています", lo, hi)
 		}
-		c := nums[0]
 		if c < lo {
 			c = lo
 		}
@@ -223,6 +198,52 @@ func init() {
 		}
 		return Float(c), nil
 	})
+
+	// min(a, b, ...) / max(a, b, ...): least/greatest argument.
+	// All-int inputs yield int; otherwise float64.
+	for name, wantMin := range map[string]bool{"min": true, "max": false} {
+		register(name, 2, -1, func(in *Interp, args []Value, at Pos) (Value, error) {
+			intPath := true
+			for _, a := range args {
+				if a.K != KInt {
+					intPath = false
+					break
+				}
+			}
+			if intPath {
+				best := args[0].I
+				for _, a := range args[1:] {
+					if wantMin {
+						if a.I < best {
+							best = a.I
+						}
+					} else if a.I > best {
+						best = a.I
+					}
+				}
+				return Int(best), nil
+			}
+			nums := make([]float64, len(args))
+			for i := range args {
+				f, err := needFloat(name, args, i, at)
+				if err != nil {
+					return Null(), err
+				}
+				nums[i] = f
+			}
+			best := nums[0]
+			for _, f := range nums[1:] {
+				if wantMin {
+					if f < best {
+						best = f
+					}
+				} else if f > best {
+					best = f
+				}
+			}
+			return Float(best), nil
+		})
+	}
 
 	// length(a): number of top-level elements. Nested levels via length(a[i]).
 	register("length", 1, 1, func(in *Interp, args []Value, at Pos) (Value, error) {

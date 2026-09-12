@@ -28,8 +28,9 @@ Goulash 処理系の変更履歴です。v0.1 は未リリースのため、す�
 - `color(r, g, b [, a])`：α値（`0` 透明～`255` 不透明）に対応。GUI の文字・図形描画に適用（`galpha` とは乗算）。CUI の端末文字αは無視
 - VS Code 拡張に F5 実行を追加（`F5` = `gsh run`、`Ctrl+F5` = `--gui` 付き。`gsh` の PATH 登録が前提）
 - `#mode cli` / `#mode gui` 指示子：`gsh run` の実行モードをコード内で指定（`#include` 先も含めた有効行の最後が勝つ。REPL は常に CUI）
-- `limit(v [, lo [, hi]])`：`lo` / `hi` の省略に対応（省略側は型の最小値 / 最大値。`limit(v)` は恒等）
-- 引数の途中省略 `,,`：`null` と等価（`limit(v, , hi)` のように省略位置に既定値を持つ関数用。末尾カンマは無視）
+- `limit(v, lo, hi)`：ちょうど3引数に厳格化（短い形・省略形はエラー）
+- `min(a, b, ...)` / `max(a, b, ...)`：最小・最大値（2個以上。全 `int` のときだけ `int`）
+- 引数の途中省略 `,,`：`null` と等価（末尾カンマは無視）
 - `httppost(url, body [, contentType [, path]])`：`httpget` の逆方向。`contentType` 既定 `application/json`、2xx以外・16MB超・10秒超過はエラー
 - `parsetree(src)`：ソースの構文木取得（IDE向け。文・式ノード＋素enum一覧。`lextokens` の対）
 - `mes()` / `print()` の末尾装飾指定：`bold` / `italic` / `bolditalic` / `underline`（完全一致のみ消費。GUIはフォント変形描画、CUIはANSI）

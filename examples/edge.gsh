@@ -14,15 +14,15 @@ repeat 5 {
 }
 mes(total)
 
-def max(a, b) {
+def mymax(a, b) {
     if a > b {
         return a
     } else {
         return b
     }
 }
-mes(max(3, 7))
-mes(max(9, 2))
+mes(mymax(3, 7))
+mes(mymax(9, 2))
 
 f = 2.5
 mes(f * 4)
