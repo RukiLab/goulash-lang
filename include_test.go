@@ -138,7 +138,6 @@ func TestIncludeMalformed(t *testing.T) {
 	dir := t.TempDir()
 	for _, src := range []string{
 		"#include foo\n",
-		"#define x\n",
 		"#include \"unclosed\n",
 		"#include \"\" \n",
 		"#include \"a.gsh\" trailing\n",
@@ -215,7 +214,6 @@ func TestDefineBasic(t *testing.T) {
 func TestDefineErrors(t *testing.T) {
 	for _, src := range []string{
 		"#define M 2 * 3\n",          // expressions are not constants
-		"#define M\n",                // missing value
 		"#define M x\n",              // identifier is not a literal
 		"#define 1X 2\n",             // bad name
 		"#define X 1\n#define X 2\n", // redefinition
@@ -226,51 +224,53 @@ func TestDefineErrors(t *testing.T) {
 	}
 }
 
-func TestEnumBasic(t *testing.T) {
-	got, err := runSrcPP(t, "enum Color { Red, Green, Blue }\nmes(Color_Red)\nmes(Color_Green)\nmes(Color_Blue)\n")
+func TestDefineAutoNumber(t *testing.T) {
+	got, err := runSrcPP(t, "#define Color_Red\n#define Color_Green\n#define Color_Blue\nmes(Color_Red)\nmes(Color_Green)\nmes(Color_Blue)\n")
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if got != "0\n1\n2\n" {
 		t.Fatalf("got %q", got)
 	}
-	// Anonymous enums define bare names; explicit values reset the counter.
-	got, err = runSrcPP(t, "enum { A, B = 5, C }\nmes(A)\nmes(B)\nmes(C)\n")
+	// Explicit values reset the counter.
+	got, err = runSrcPP(t, "#define A\n#define B 5\n#define C\nmes(A)\nmes(B)\nmes(C)\n")
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if got != "0\n5\n6\n" {
 		t.Fatalf("got %q", got)
 	}
-	// Multi-line enums and negative values.
-	got, err = runSrcPP(t, "enum Dir {\nNorth,\nSouth = -2,\nEast\n}\nmes(Dir_North)\nmes(Dir_South)\nmes(Dir_East)\n")
+	// Negative explicit values work.
+	got, err = runSrcPP(t, "#define North\n#define South -2\n#define East\nmes(North)\nmes(South)\nmes(East)\n")
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if got != "0\n-2\n-1\n" {
 		t.Fatalf("got %q", got)
 	}
-	// Inactive regions never reach the parser.
-	got, err = runSrcPP(t, "#ifdef MISSING\nenum Skip { X }\n#endif\nmes(\"ok\")\n")
-	if err != nil || got != "ok\n" {
-		t.Fatalf("inactive enum: got %q, %v", got, err)
+	// Non-int defines leave the counter alone.
+	got, err = runSrcPP(t, "#define Name \"x\"\n#define A\nmes(A)\nmes(Name)\n")
+	if err != nil {
+		t.Fatalf("run: %v", err)
 	}
-}
-
-func TestEnumErrors(t *testing.T) {
-	for _, src := range []string{
-		"enum Color\nmes(1)\n",              // missing brace
-		"enum Color { Red\nmes(1)\n",        // unclosed
-		"enum { }\nmes(1)\n",                // empty
-		"enum { 1A }\nmes(1)\n",             // bad member name
-		"enum { A = x }\nmes(1)\n",          // non-integer value
-		"enum { A, A }\nmes(1)\n",           // duplicate member
-		"#define A 1\nenum { A }\nmes(1)\n", // #define names cannot be members
-		"#enum Color { Red }\nmes(1)\n",     // #enum directive is rejected
-	} {
-		if _, err := runParsePP(src); err == nil {
-			t.Fatalf("src %q: want enum error, got nil", src)
-		}
+	if got != "0\nx\n" {
+		t.Fatalf("got %q", got)
+	}
+	// Inactive regions never reach the counter.
+	got, err = runSrcPP(t, "#ifdef MISSING\n#define Skip\n#endif\n#define A\nmes(A)\nmes(\"ok\")\n")
+	if err != nil || got != "0\nok\n" {
+		t.Fatalf("inactive define: got %q, %v", got, err)
+	}
+	// Uses see defines from earlier lines only.
+	if _, err := runSrcPP(t, "mes(X_Q)\n#define X_Q 0\n"); err == nil {
+		t.Fatalf("use before define should fail")
+	}
+	// Duplicates still error, even valueless.
+	if _, err := runParsePP("#define A\n#define A\nmes(1)\n"); err == nil {
+		t.Fatalf("duplicate valueless define should fail")
+	}
+	if _, err := runParsePP("#enum Color { Red }\nmes(1)\n"); err == nil {
+		t.Fatalf("#enum directive should stay rejected")
 	}
 }
 

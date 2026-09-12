@@ -7,14 +7,13 @@
 //	omitted means gui)
 //
 //	#include "path"   splice a file (once-semantics, circular = error)
-//	#define NAME lit  constant: one int/float/string/bool literal
-//	                  (optional leading `-` for numbers)
+//	#define NAME [lit] constant: one int/float/string/bool literal
+//	                  (optional leading `-` for numbers); omitted lit
+//	                  auto-numbers from a counter (explicit ints
+//	                  reset it, other literals leave it alone)
 //	#ifdef NAME / #ifndef NAME / #else / #endif
 //	                  conditional lines (nestable)
 //	#error message    fail with message when reached
-//
-// NOTE: `#enum` is rejected (unknown directive); sequential constants
-// use the bare `enum` statement, expanded by the parser pre-pass.
 //
 // Search order: the including file's directory, then the working
 // directory; absolute paths are used as-is. Tokens keep file-local
@@ -29,8 +28,10 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -68,7 +69,9 @@ type includer struct {
 	// Preprocessor state, shared across the whole include tree so
 	// defines flow into (and out of) included files in line order.
 	defines map[string]ppDefine
-	conds   []ppFrame
+	// Auto-number counter for valueless #define (starts at 0 per run).
+	seq   int64
+	conds []ppFrame
 	// Run mode: last active `#mode` argument ("cli"/"gui", "" unset).
 	mode string
 }
@@ -198,7 +201,7 @@ func (st *includer) combineSource(display, src, parentDir string) ([]Token, erro
 			if !active[i] {
 				continue
 			}
-			def, err := parseDefineValue(d.rest)
+			def, err := st.defineValue(d.rest)
 			if err != nil {
 				return nil, &LexError{File: display, Line: i + 1, Column: 1, Msg: err.Error()}
 			}
@@ -381,11 +384,9 @@ func parseDirective(line string) (*directive, error) {
 	case "define":
 		name, value := splitDirectiveArg(tail)
 		if !isDefineName(name) {
-			return nil, fmt.Errorf("不正な #define ディレクティブです（#define NAME 値 が必要です）")
+			return nil, fmt.Errorf("不正な #define ディレクティブです（#define NAME [値] が必要です）")
 		}
-		if strings.TrimSpace(value) == "" {
-			return nil, fmt.Errorf("不正な #define ディレクティブです（#define NAME 値 が必要です）")
-		}
+		// An empty value auto-numbers (resolved at collection).
 		return &directive{kind: dirDefine, arg: name, rest: value}, nil
 	case "ifdef", "ifndef":
 		name, extra := splitDirectiveArg(tail)
@@ -441,6 +442,35 @@ func isDefineName(s string) bool {
 		return false
 	}
 	return true
+}
+
+// defineValue resolves a #define value: empty means the next sequential
+// number (auto-numbering); an explicit int resets the counter to
+// value+1; other literals leave the counter alone.
+func (st *includer) defineValue(rest string) (ppDefine, error) {
+	if strings.TrimSpace(rest) == "" {
+		if st.seq == math.MaxInt64 {
+			return ppDefine{}, fmt.Errorf("連番カウンタが上限を超えました")
+		}
+		v := st.seq
+		st.seq++
+		return ppDefine{typ: TokInt, lit: strconv.FormatInt(v, 10)}, nil
+	}
+	def, err := parseDefineValue(rest)
+	if err != nil {
+		return ppDefine{}, err
+	}
+	if def.typ == TokInt {
+		v, err := strconv.ParseInt(def.lit, 10, 64)
+		if err != nil {
+			return ppDefine{}, err
+		}
+		if v == math.MaxInt64 {
+			return ppDefine{}, fmt.Errorf("連番カウンタが上限を超えました")
+		}
+		st.seq = v + 1
+	}
+	return def, nil
 }
 
 // parseDefineValue lexes a #define value: exactly one int/float/string/

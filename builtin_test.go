@@ -620,9 +620,6 @@ func TestParsetree(t *testing.T) {
 	mustOutIO(t, "t = parsetree(\"repeat 3 {\\n}\\n\")\nmes(t[4][0][5] == \"\")\n", "", "true\n")
 	// Operators use source symbols; expression statements unwrap.
 	mustOutIO(t, "t = parsetree(\"x = 1 + 2 * 3\\n\")\nmes(t[4][0][0])\nmes(t[4][0][5][4])\nmes(t[4][0][5][6][0])\n", "", "assign\n+\nbinary\n")
-	// Bare enums (pre-pass) surface with member positions and values.
-	mustOutIO(t, "t = parsetree(\"enum Color {\\nRed,\\nBlue = 5\\n}\\n\")\nmes(length(t[5]))\nmes(t[5][0][4])\nmes(t[5][0][5][0][4])\nmes(t[5][0][5][1][5])\nmes(t[5][0][5][1][1])\n", "",
-		"1\nColor\nColor_Red\n5\n3\n")
 	mustOutIO(t, "mes(vartype(parsetree(\"x = 1\")))\n", "", "array\n")
 	mustErrIO(t, "parsetree(1)\n", "文字列である必要があります")
 	mustErrIO(t, "mes(parsetree(\"mes(\"))\n", "が必要です")

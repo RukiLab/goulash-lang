@@ -31,12 +31,8 @@ func Parse(src string) (*Program, error) {
 }
 
 // ParseTokens parses an explicit token stream (used by ParseFile after
-// #include splicing). Bare-enum declarations are expanded first.
+// #include splicing).
 func ParseTokens(toks []Token) (*Program, error) {
-	toks, err := expandEnums(toks)
-	if err != nil {
-		return nil, err
-	}
 	p := &parser{toks: toks}
 	return p.parseProgram()
 }
@@ -216,8 +212,8 @@ func (p *parser) parseStmt(top bool) (Stmt, error) {
 	case TokStar:
 		return nil, p.errAt(t, "予期しない '*' です")
 	case TokIdent:
-		// Bare-enum declarations are consumed by expandEnums; a
-		// surviving `enum` here is an ordinary identifier.
+		// `enum` is an ordinary identifier (the enum statement is
+		// abolished; sequential constants use valueless #define).
 		return p.parseAssignOrExpr()
 	default:
 		// Expression statements may start with literals, '(', '[', '-', '!', true/false.

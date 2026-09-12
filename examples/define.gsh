@@ -1,21 +1,23 @@
 #mode cli
-// enum（連番定数）の作例
-enum Color { Red, Green, Blue }
+// 連番定数の作例（#define 無値形）
+#define Color_Red
+#define Color_Green
+#define Color_Blue
 mes(Color_Red)
 mes(Color_Green)
 mes(Color_Blue)
 
-enum { Low, High = 10, Max }
+#define Low
+#define High 10
+#define Max
 mes(Low)
 mes(High)
 mes(Max)
 
-enum Dir {
-    North,
-    South,
-    East,
-    West,
-}
+#define Dir_North
+#define Dir_South
+#define Dir_East
+#define Dir_West
 mes(Dir_West)
 
 d = Dir_South

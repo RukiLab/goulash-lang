@@ -6,8 +6,6 @@
 // navigation, and hover.
 package main
 
-import "strings"
-
 func init() {
 	// lextokens(src): tokenize source, returning an array of
 	// [type, text, line, col] arrays (EOF omitted). Lex errors are
@@ -42,13 +40,11 @@ func init() {
 	})
 
 	// parsetree(src): parse source into a tree for editors (outline,
-	// navigation, hover): ["program", line, col, text, stmts, enums].
+	// navigation, hover): ["program", line, col, text, stmts].
 	// Every node is [type, line, col, text, ...kind fields]; bodies
 	// are statement arrays; expression statements unwrap to their
-	// expression. Bare-enum declarations (consumed by the pre-pass)
-	// are listed under enums with member positions. Raw directives
-	// (#...) are lex errors, like lextokens. Parse errors are
-	// runtime errors.
+	// expression. Raw directives (#...) are lex errors, like
+	// lextokens. Parse errors are runtime errors.
 	register("parsetree", 1, 1, func(in *Interp, args []Value, at Pos) (Value, error) {
 		src, err := needString("parsetree", args, 0, at)
 		if err != nil {
@@ -66,15 +62,7 @@ func init() {
 		for _, s := range prog.Stmts {
 			stmts = append(stmts, stmtValue(s))
 		}
-		enums := make([]Value, 0)
-		for _, d := range scanEnumDecls(toks) {
-			mems := make([]Value, 0, len(d.members))
-			for _, e := range d.members {
-				mems = append(mems, nodeArr("member", Pos{Line: e.line, Column: e.col}, e.name+" = "+e.lit, Str(e.name), Int(e.value)))
-			}
-			enums = append(enums, nodeArr("enum", Pos{Line: d.line, Column: d.col}, enumDeclText(d), Str(d.name), ArrayOf(mems)))
-		}
-		return nodeArr("program", Pos{Line: 1, Column: 1}, prog.String(), ArrayOf(stmts), ArrayOf(enums)), nil
+		return nodeArr("program", Pos{Line: 1, Column: 1}, prog.String(), ArrayOf(stmts)), nil
 	})
 }
 
@@ -84,18 +72,6 @@ func nodeArr(typ string, at Pos, text string, fields ...Value) Value {
 	out := make([]Value, 0, 4+len(fields))
 	out = append(out, Str(typ), Int(int64(at.Line)), Int(int64(at.Column)), Str(text))
 	return ArrayOf(append(out, fields...))
-}
-
-// enumDeclText rebuilds a canonical enum declaration for hover text.
-func enumDeclText(d enumDeclInfo) string {
-	parts := make([]string, len(d.members))
-	for i, e := range d.members {
-		parts[i] = e.name + " = " + e.lit
-	}
-	if d.name == "" {
-		return "enum {" + strings.Join(parts, ", ") + "}"
-	}
-	return "enum " + d.name + " {" + strings.Join(parts, ", ") + "}"
 }
 
 // blockValues converts a statement block (nil-safe).

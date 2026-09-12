@@ -42,7 +42,7 @@ gsh run examples/gui_hello.gsh --gui
 | `builtins.gsh` | 組み込み関数の一覧動作 |
 | `edge.gsh` | 境界条件の作例 |
 | `sample19.gsh` | 分岐・関数の作例 |
-| `enum.gsh` | `enum`・`switch`・`lextokens` の作例 |
+| `define.gsh` | `#define`・`switch`・`lextokens` の作例 |
 | `falling.gsh` | 落ちものパズル（`#define` 使用例） |
 | `test.gsh` | 画像付きボタンの作例 |
 | `include_demo.gsh` | `#include` による分割例 |

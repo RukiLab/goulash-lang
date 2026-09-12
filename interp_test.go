@@ -310,36 +310,9 @@ func TestFormerKeywordsAreIdents(t *testing.T) {
 	if _, err := Parse("*label\n"); err == nil {
 		t.Fatal("labels should be rejected")
 	}
-	// Bare enum declares sequential constants; `enum` alone stays usable.
-	mustOut(t, "enum Color { Red, Green = 5, Blue }\nmes(Color_Red)\nmes(Color_Green)\nmes(Color_Blue)\n", "0\n5\n6\n")
-	mustOut(t, "enum { A, B }\nmes(A)\nmes(B)\n", "0\n1\n")
+	// `enum` is an ordinary identifier (the enum statement is abolished;
+	// sequential constants use valueless #define, tested in include_test).
 	mustOut(t, "enum = 5\nmes(enum)\n", "5\n")
-	mustErr(t, "mes(X_Q)\nenum X { Q }\n", "未定義の変数")
-}
-
-// The enum pre-pass never rewrites identifiers after a dot, even
-// though dotted access itself no longer parses.
-func TestEnumPrepassSkipsDot(t *testing.T) {
-	toks, err := Lex("m.Red\nenum C { Red, }\nmes(C_Red)\n")
-	if err != nil {
-		t.Fatal(err)
-	}
-	toks, err = expandEnums(toks)
-	if err != nil {
-		t.Fatal(err)
-	}
-	seenDotRed, seenConst := false, false
-	for i, tk := range toks {
-		if tk.Type == TokDot && i+1 < len(toks) && toks[i+1].Lit == "Red" && toks[i+1].Type == TokIdent {
-			seenDotRed = true
-		}
-		if tk.Type == TokInt && tk.Lit == "0" {
-			seenConst = true // C_Red rewritten to its value
-		}
-	}
-	if !seenDotRed || !seenConst {
-		t.Fatalf("dotRed=%v const=%v", seenDotRed, seenConst)
-	}
 }
 
 func TestSample19Golden(t *testing.T) {

@@ -237,9 +237,8 @@ func TestParseConditionWithBraceVar(t *testing.T) {
 
 func TestParseRejections(t *testing.T) {
 	mustFailParse(t, "x = 1;\n", "セミコロン")
-	mustFailParse(t, "enum Color\n", "不正な enum")
-	mustFailParse(t, "enum { }\n", "不正な enum")
-	mustFailParse(t, "enum C { A }\nenum C { A }\n", "既に定義")
+	mustFailParse(t, "enum Color\n", "改行")
+	mustFailParse(t, "enum { }\n", "予期しない '{'")
 	mustFailParse(t, "*label\n", "*")
 	mustFailParse(t, "a = [1, 2\n", "']'")
 	mustFailParse(t, "if x {\nmes(1)\n", "ブロックが閉じられていません")
