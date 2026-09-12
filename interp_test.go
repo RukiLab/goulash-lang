@@ -250,7 +250,7 @@ func TestFunctions(t *testing.T) {
 	mustOut(t, "def hello() {\nmes(\"Hello\")\n}\nhello()\n", "Hello\n")
 	mustOut(t, "def add(a, b) {\nreturn a + b\n}\nmes(add(10, 20))\n", "30\n")
 	mustOut(t, "def f() {\nreturn 1\nreturn 2\n}\nmes(f())\n", "1\n")
-	mustOut(t, "def f() {\n}\nmes(f())\n", "null\n")
+	mustOut(t, "def f() {\n}\nmes(f())\n", "\n")
 	mustOut(t, "def fact(n) {\nif n <= 1 {\nreturn 1\n}\nreturn n * fact(n - 1)\n}\nmes(fact(5))\n", "120\n")
 	mustErr(t, "hello()\n", "未定義の関数")
 	mustErr(t, "def f(a) {\n}\nf(1, 2)\n", "1 個必要")
@@ -261,6 +261,24 @@ func TestFunctions(t *testing.T) {
 	// Functions are not values: names only call, never read or store.
 	mustErr(t, "def f() {\n}\nmes(f)\n", "未定義の変数")
 	mustErr(t, "def f() {\n}\ng = f\n", "未定義の変数")
+}
+
+func TestVoidValues(t *testing.T) {
+	// mes()/print() skip void silently.
+	mustOut(t, "def f() {\n}\nmes(f())\n", "\n")
+	mustOut(t, "def f() {\n}\nmes(\"a\", f(), \"b\")\n", "a b\n")
+	// Every other use is an error.
+	mustErr(t, "def f() {\n}\nx = f()\n", "void値")
+	mustErr(t, "def g() {\n}\ndef h(a) {\nreturn a\n}\nmes(h(g()))\n", "void値")
+	mustErr(t, "def f() {\n}\nmes(str(f()))\n", "void値")
+	mustErr(t, "def f() {\n}\na = [f()]\n", "void値")
+	mustErr(t, "def f() {\n}\nmes(f() == 1)\n", "void値")
+	mustErr(t, "def f() {\n}\nmes(1 == f())\n", "void値")
+	mustErr(t, "def f() {\n}\nswitch f() {\ncase 1 {\nmes(1)\n}\n}\n", "void値")
+	// Void propagates through return and discards as a statement.
+	mustOut(t, "def g() {\n}\ndef f() {\nreturn g()\n}\nf()\nmes(\"ok\")\n", "ok\n")
+	// Non-void contexts keep their own errors.
+	mustErr(t, "def f() {\n}\nif f() {\n}\n", "bool")
 }
 
 func TestMes(t *testing.T) {

@@ -277,13 +277,17 @@ func splitStyleArgs(args []Value) ([]Value, gui.TextStyle) {
 
 // mes is the basic output function (variadic, space-joined + newline).
 // Trailing style keywords ("bold", "italic", "bolditalic", "underline")
-// are consumed as decoration instead of printed.
+// are consumed as decoration instead of printed. Void arguments are
+// skipped silently (they contribute nothing, not even a separator).
 func init() {
 	register("mes", 0, -1, func(in *Interp, args []Value, at Pos) (Value, error) {
 		rest, st := splitStyleArgs(args)
-		parts := make([]string, len(rest))
-		for i, a := range rest {
-			parts[i] = Stringify(a)
+		parts := make([]string, 0, len(rest))
+		for _, a := range rest {
+			if a.K == KNull {
+				continue
+			}
+			parts = append(parts, Stringify(a))
 		}
 		in.be.Println(strings.Join(parts, " "), st)
 		return Null(), nil

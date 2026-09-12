@@ -116,8 +116,9 @@ func clipEnsure() error {
 }
 
 func init() {
-	// getenv(name): environment variable value, or null when unset.
-	// (An empty-but-set variable reads as "".)
+	// getenv(name): environment variable value, or "" when unset
+	// (unset and empty-but-set both read as ""; aborting on a
+	// missing variable would make optional configuration unusable).
 	register("getenv", 1, 1, func(in *Interp, args []Value, at Pos) (Value, error) {
 		name, err := needString("getenv", args, 0, at)
 		if err != nil {
@@ -125,7 +126,7 @@ func init() {
 		}
 		v, ok := os.LookupEnv(name)
 		if !ok {
-			return Null(), nil
+			return Str(""), nil
 		}
 		return Str(v), nil
 	})
@@ -190,7 +191,8 @@ func init() {
 		return Null(), nil
 	})
 
-	// dlgopen([filter]): file-open dialog, or null on cancel.
+	// dlgopen([filter]): file-open dialog, or "" on cancel (an empty
+	// path is never a real selection, so it doubles as the sentinel).
 	// filter is "名前|*.png;*.jpg" (one group).
 	register("dlgopen", 0, 1, func(in *Interp, args []Value, at Pos) (Value, error) {
 		b := dialog.File().Title("開く")
@@ -207,19 +209,19 @@ func init() {
 		path, err := b.Load()
 		if err != nil {
 			if errors.Is(err, dialog.ErrCancelled) {
-				return Null(), nil
+				return Str(""), nil
 			}
 			return Null(), rtErrf(at, "dlgopen：%s", err.Error())
 		}
 		return Str(path), nil
 	})
 
-	// dlgsave(): file-save dialog, or null on cancel.
+	// dlgsave(): file-save dialog, or "" on cancel.
 	register("dlgsave", 0, 0, func(in *Interp, args []Value, at Pos) (Value, error) {
 		path, err := dialog.File().Title("保存").Save()
 		if err != nil {
 			if errors.Is(err, dialog.ErrCancelled) {
-				return Null(), nil
+				return Str(""), nil
 			}
 			return Null(), rtErrf(at, "dlgsave：%s", err.Error())
 		}

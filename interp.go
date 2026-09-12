@@ -473,6 +473,9 @@ func (in *Interp) execSwitch(n *SwitchStmt, env *Env) (err error) {
 	if err != nil {
 		return err
 	}
+	if err := requireValue(v, n.Value.Pos()); err != nil {
+		return err
+	}
 	var body *BlockStmt
 outer:
 	for _, c := range n.Cases {
@@ -515,6 +518,9 @@ outer:
 
 // assign implements `target = value`.
 func (in *Interp) assign(target Expr, v Value, env *Env) error {
+	if err := requireValue(v, target.Pos()); err != nil {
+		return err
+	}
 	switch t := target.(type) {
 	case *VarExpr:
 		return env.Assign(t.Name, v, t.At)
@@ -626,6 +632,9 @@ func (in *Interp) evalExpr(x Expr, env *Env) (Value, error) {
 			if err != nil {
 				return Null(), err
 			}
+			if err := requireValue(v, e.Pos()); err != nil {
+				return Null(), err
+			}
 			elems[i] = v
 		}
 		return ArrayOf(elems), nil
@@ -707,6 +716,13 @@ func (in *Interp) evalCall(n *CallExpr, env *Env) (Value, error) {
 				if err != nil {
 					return Null(), err
 				}
+				// mes()/print() tolerate void (they skip it);
+				// every other builtin rejects it here.
+				if v.Name != "mes" && v.Name != "print" {
+					if err := requireValue(ev, a.Pos()); err != nil {
+						return Null(), err
+					}
+				}
 				args[i] = ev
 			}
 			return callBuiltin(v.Name, in, args, n.At)
@@ -733,6 +749,9 @@ func (in *Interp) callChecked(fn *FuncVal, argExprs []Expr, env *Env, at Pos) (V
 	for i, a := range argExprs {
 		ev, err := in.evalExpr(a, env)
 		if err != nil {
+			return Null(), err
+		}
+		if err := requireValue(ev, a.Pos()); err != nil {
 			return Null(), err
 		}
 		args[i] = ev
@@ -806,8 +825,20 @@ func (in *Interp) evalBinary(n *BinaryExpr, env *Env) (Value, error) {
 	}
 	switch n.Op {
 	case TokEq:
+		if err := requireValue(l, n.L.Pos()); err != nil {
+			return Null(), err
+		}
+		if err := requireValue(r, n.R.Pos()); err != nil {
+			return Null(), err
+		}
 		return Bool(valuesEqual(l, r)), nil
 	case TokNotEq:
+		if err := requireValue(l, n.L.Pos()); err != nil {
+			return Null(), err
+		}
+		if err := requireValue(r, n.R.Pos()); err != nil {
+			return Null(), err
+		}
 		return Bool(!valuesEqual(l, r)), nil
 	case TokLt, TokLtEq, TokGt, TokGtEq:
 		return compare(n.Op, l, r, n.At)
@@ -828,6 +859,16 @@ func requireBool(v Value, at Pos) (bool, error) {
 		return false, rtErrf(at, "条件式は bool 型である必要があります。%s が指定されました", typeNameOf(v))
 	}
 	return v.B, nil
+}
+
+// requireValue rejects void: internal null must never surface to
+// scripts as a usable value (assign/args/operands fail here; mes()
+// and print() silently skip void instead).
+func requireValue(v Value, at Pos) error {
+	if v.K == KNull {
+		return rtErrf(at, "void値を使用できません")
+	}
+	return nil
 }
 
 func isNum(v Value) bool { return v.K == KInt || v.K == KFloat }

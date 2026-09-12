@@ -6,12 +6,16 @@ import "strings"
 func init() {
 	// print(args...): mes without the trailing newline. Trailing
 	// style keywords ("bold", "italic", "bolditalic", "underline")
-	// are consumed as decoration instead of printed.
+	// are consumed as decoration instead of printed. Void arguments
+	// are skipped silently.
 	register("print", 0, -1, func(in *Interp, args []Value, at Pos) (Value, error) {
 		rest, st := splitStyleArgs(args)
-		parts := make([]string, len(rest))
-		for i, a := range rest {
-			parts[i] = Stringify(a)
+		parts := make([]string, 0, len(rest))
+		for _, a := range rest {
+			if a.K == KNull {
+				continue
+			}
+			parts = append(parts, Stringify(a))
 		}
 		out := ""
 		for i, p := range parts {
@@ -87,7 +91,7 @@ func init() {
 	})
 
 	// input([prompt]): read one line, returned as a string.
-	// EOF yields null.
+	// EOF yields "" (indistinguishable from an empty line by design).
 	//
 	// GUI is immediate mode instead of line mode: input() returns
 	// characters typed since the previous call (IME-committed text
@@ -113,7 +117,7 @@ func init() {
 		}
 		line, ok := in.be.ReadLine(prompt)
 		if !ok {
-			return Null(), nil
+			return Str(""), nil
 		}
 		return Str(line), nil
 	})

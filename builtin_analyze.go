@@ -110,10 +110,12 @@ func blockValues(b *BlockStmt) []Value {
 	return out
 }
 
-// exprOrNull converts an optional expression (nil = absent).
-func exprOrNull(x Expr) Value {
+// exprOrAbsent converts an optional expression. Absence is ""
+// (never null): tree slots stay readable into variables, and == ""
+// tests them.
+func exprOrAbsent(x Expr) Value {
 	if x == nil {
-		return Null()
+		return Str("")
 	}
 	return exprValue(x)
 }
@@ -127,7 +129,7 @@ func stmtValue(s Stmt) Value {
 	case *ExprStmt:
 		return exprValue(n.X)
 	case *IfStmt:
-		var elseV Value = Null()
+		var elseV Value = Str("")
 		if n.Else != nil {
 			if b, ok := n.Else.(*BlockStmt); ok {
 				elseV = ArrayOf(blockValues(b))
@@ -137,7 +139,7 @@ func stmtValue(s Stmt) Value {
 		}
 		return nodeArr("if", n.Pos(), n.String(), exprValue(n.Cond), ArrayOf(blockValues(n.Then)), elseV)
 	case *RepeatStmt:
-		var varV, itemV Value = Null(), Null()
+		var varV, itemV Value = Str(""), Str("")
 		if n.HasVar {
 			varV = Str(n.Var)
 		}
@@ -162,7 +164,7 @@ func stmtValue(s Stmt) Value {
 	case *ContinueStmt:
 		return nodeArr("continue", n.Pos(), n.String())
 	case *ReturnStmt:
-		return nodeArr("return", n.Pos(), n.String(), exprOrNull(n.Value))
+		return nodeArr("return", n.Pos(), n.String(), exprOrAbsent(n.Value))
 	case *DefStmt:
 		params := make([]Value, 0, len(n.Params))
 		for _, p := range n.Params {

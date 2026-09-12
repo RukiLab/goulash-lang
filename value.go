@@ -21,7 +21,9 @@ const (
 func (k Kind) String() string {
 	switch k {
 	case KNull:
-		return "null"
+		// Internal null surfaces to scripts as void: the word null
+		// never appears in user-visible output.
+		return "void"
 	case KInt:
 		return "int"
 	case KFloat:

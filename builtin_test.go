@@ -114,10 +114,10 @@ func TestMath(t *testing.T) {
 	mustErrIO(t, "mes(limit(5))\n", "3 個必要")
 	mustErrIO(t, "mes(limit(5, 0))\n", "3 個必要")
 	mustErrIO(t, "mes(limit(1, 2, 3, 4))\n", "3 個必要")
-	mustErrIO(t, "mes(limit(5, , 10))\n", "数値である必要があります")
-	mustErrIO(t, "mes(limit(, 0, 10))\n", "数値である必要があります")
-	// Elision is still null elsewhere.
-	mustOutIO(t, "mes(,)\n", "", "null\n")
+	mustErrIO(t, "mes(limit(5, , 10))\n", "void値")
+	mustErrIO(t, "mes(limit(, 0, 10))\n", "void値")
+	// Elision is still void; mes() skips it silently.
+	mustOutIO(t, "mes(,)\n", "", "\n")
 	// min/max: least/greatest of 2+ args; all-int yields int.
 	mustOutIO(t, "mes(min(3, 1, 2))\nmes(max(3, 1, 2))\nmes(min(-5, -2))\nmes(max(-5, -2))\nmes(min(7, 7))\n", "", "1\n3\n-5\n-2\n7\n")
 	mustOutIO(t, "mes(min(1.5, 2))\nmes(max(1, 2.5))\nmes(min(3, 1.5, 2))\n", "", "1.5\n2.5\n1.5\n")
@@ -271,7 +271,7 @@ func TestArgs(t *testing.T) {
 }
 
 func TestEnv(t *testing.T) {
-	mustOutIO(t, "setenv(\"GOU_TEST\", \"42\")\nmes(getenv(\"GOU_TEST\"))\nmes(getenv(\"GOU_NO_SUCH_VAR_XYZ\"))\n", "", "42\nnull\n")
+	mustOutIO(t, "setenv(\"GOU_TEST\", \"42\")\nmes(getenv(\"GOU_TEST\"))\nmes(getenv(\"GOU_NO_SUCH_VAR_XYZ\") == \"\")\n", "", "42\ntrue\n")
 	mustErrIO(t, "getenv(1)\n", "文字列である必要があります")
 	mustErrIO(t, "setenv(\"a\")\n", "2 個必要")
 	mustErrIO(t, "open(1)\n", "文字列である必要があります")
@@ -403,7 +403,8 @@ func TestSplitStyleArgs(t *testing.T) {
 func TestInput(t *testing.T) {
 	mustOutIO(t, "s = input()\nmes(s)\n", "hello\n", "hello\n")
 	mustOutIO(t, "s = input(\"name? \")\nmes(s)\n", "bob\n", "name? bob\n")
-	mustOutIO(t, "mes(input())\n", "", "null\n") // EOF
+	mustOutIO(t, "mes(input())\n", "", "\n")                    // EOF yields ""
+	mustOutIO(t, "s = input()\nmes(s == \"\")\n", "", "true\n") // EOF
 }
 
 // runScriptDir runs src with the working directory and script directory
@@ -592,7 +593,7 @@ func TestStringExtras(t *testing.T) {
 
 func TestVartypeFunc(t *testing.T) {
 	mustErrIO(t, "def f() {\n}\nmes(vartype(f))\n", "未定義の変数")
-	mustOutIO(t, "def f() {\n}\nmes(vartype([1]))\nmes(f())\n", "", "array\nnull\n")
+	mustOutIO(t, "def f() {\n}\nmes(vartype([1]))\nmes(f())\n", "", "array\n\n")
 }
 
 func TestLexTokens(t *testing.T) {
@@ -605,6 +606,10 @@ func TestLexTokens(t *testing.T) {
 func TestParsetree(t *testing.T) {
 	mustOutIO(t, "t = parsetree(\"def f(a, b) {\\nreturn a\\n}\\nmes(f(1, 2))\\n\")\nmes(t[0])\nmes(length(t[4]))\nmes(t[4][0][4])\nmes(t[4][0][5][1][4])\nmes(t[4][1][0])\nmes(t[4][0][1])\n", "",
 		"program\n2\nf\nb\ncall\n1\n")
+	// Absent optionals are "" (readable into variables, testable with ==).
+	mustOutIO(t, "t = parsetree(\"if true {\\nmes(1)\\n}\\n\")\nmes(t[4][0][6] == \"\")\n", "", "true\n")
+	mustOutIO(t, "t = parsetree(\"def f() {\\nreturn\\n}\\n\")\nmes(t[4][0][6][0][4] == \"\")\n", "", "true\n")
+	mustOutIO(t, "t = parsetree(\"repeat 3 {\\n}\\n\")\nmes(t[4][0][5] == \"\")\n", "", "true\n")
 	// Operators use source symbols; expression statements unwrap.
 	mustOutIO(t, "t = parsetree(\"x = 1 + 2 * 3\\n\")\nmes(t[4][0][0])\nmes(t[4][0][5][4])\nmes(t[4][0][5][6][0])\n", "", "assign\n+\nbinary\n")
 	// Bare enums (pre-pass) surface with member positions and values.
