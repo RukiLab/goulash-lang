@@ -58,7 +58,7 @@ func TestBuiltinRegistryComplete(t *testing.T) {
 		"abs", "sqrt", "sin", "cos", "tan", "atan", "exp", "log", "pow", "limit", "min", "max",
 		"rnd", "randomize",
 		"strlen", "strmid", "instr", "strtrim", "split", "strf", "getpath",
-		"gettime", "sleep", "await", "tick", "nanotime", "end", "assert", "throw", "logmes", "exec", "args",
+		"gettime", "sleep", "await", "tick", "nanotime", "end", "assert", "logmes", "exec", "args",
 		"getenv", "setenv", "open", "clipboard_get", "clipboard_set",
 		"dlgopen", "dlgsave", "httpget", "httppost",
 		"exist", "dirlist", "delete", "mkdir", "chdir", "bcopy", "bload", "bsave",

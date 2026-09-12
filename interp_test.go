@@ -164,8 +164,8 @@ func TestTryCatchAbolished(t *testing.T) {
 	// try/catch are ordinary identifiers now; try blocks are gone.
 	mustOut(t, "try = 5\nmes(try)\n", "5\n")
 	mustErr(t, "try {\nmes(1)\n}\n", "予期しない '{'")
-	// throw() itself stays: uncaught errors abort.
-	mustErr(t, "throw(\"late\")\n", "late")
+	// throw() is abolished too: an ordinary undefined call.
+	mustErr(t, "throw(\"late\")\n", "未定義の関数")
 }
 
 func TestRepeatArray(t *testing.T) {

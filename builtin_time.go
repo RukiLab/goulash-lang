@@ -127,15 +127,6 @@ func init() {
 		return Null(), nil
 	})
 
-	// throw(msg): raise a catchable error (uncaught, it aborts like assert).
-	register("throw", 1, 1, func(in *Interp, args []Value, at Pos) (Value, error) {
-		m, err := needString("throw", args, 0, at)
-		if err != nil {
-			return Null(), err
-		}
-		return Null(), rtErrf(at, "%s", m)
-	})
-
 	// logmes(args...): mes-style output to the error stream (debugging).
 	register("logmes", 0, -1, func(in *Interp, args []Value, at Pos) (Value, error) {
 		parts := make([]string, len(args))
