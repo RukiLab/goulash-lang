@@ -1,18 +1,12 @@
 #mode cli
 // HSP後継言語 v0.1 サンプル (§19)
 def greet(p) {
-    mes("Hello, " + p.name)
+    mes("Hello, " + p[0])
 }
 
 people = [
-    {
-        "name": "Alice",
-        "age": 20,
-    },
-    {
-        "name": "Bob",
-        "age": 25,
-    },
+    ["Alice", 20],
+    ["Bob", 25],
 ]
 
 repeat 2 as i {

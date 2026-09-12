@@ -10,25 +10,23 @@
 #define ARR 3
 #define MAX_LOCK_RESETS 15
 
-// ゲーム状態定義
-#define STATE_PLAY 0
-#define STATE_PAUSE 1
-#define STATE_GAMEOVER 2
+// 配列添字
+enum P { TYPE, ROT, COL, ROW, BLOCKS }
+// → P_TYPE, P_ROT, P_COL, P_ROW, P_BLOCKS
+
+// ゲーム状態
+enum STATE { PLAY, PAUSE, GAMEOVER }
+// → STATE_PLAY, STATE_PAUSE, STATE_GAMEOVER
 
 // ミノの種類
-#define PIECE_I 0
-#define PIECE_O 1
-#define PIECE_T 2
-#define PIECE_S 3
-#define PIECE_Z 4
-#define PIECE_J 5
-#define PIECE_L 6
+enum PIECE { I, O, T, S, Z, J, L }
+// → PIECE_I, PIECE_O, PIECE_T, PIECE_S, PIECE_Z, PIECE_J, PIECE_L
 
 // ガイドライン準拠 落下速度テーブル (Lv 1 〜 Lv 15+) [フレーム数]
-speedTable = [60, 50, 42, 34, 27, 21, 16, 12, 9, 6, 5, 4, 3, 2, 1]
+speed_table = [60, 50, 42, 34, 27, 21, 16, 12, 9, 6, 5, 4, 3, 2, 1]
 
 // SRS準拠 各ミノの4回転状態 [type][rot][y][x]
-pieceShapes = [
+piece_shapes = [
     // 0: I
     [
         [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
@@ -81,7 +79,7 @@ pieceShapes = [
 ]
 
 // SRS ウォールキックデータ
-kickJLSTZ = [
+kick_jlstz = [
     [[0,0], [-1,0], [-1,-1], [0,2], [-1,2]],  // 0 -> 1
     [[0,0], [1,0], [1,1], [0,-2], [1,-2]],    // 1 -> 0
     [[0,0], [1,0], [1,1], [0,-2], [1,-2]],    // 1 -> 2
@@ -92,7 +90,7 @@ kickJLSTZ = [
     [[0,0], [1,0], [1,-1], [0,2], [1,2]]      // 0 -> 3
 ]
 
-kickI = [
+kick_i = [
     [[0,0], [-2,0], [1,0], [-2,1], [1,-2]],   // 0 -> 1
     [[0,0], [2,0], [-1,0], [2,-1], [-1,2]],   // 1 -> 0
     [[0,0], [-1,0], [2,0], [-1,-2], [2,1]],   // 2 -> 1
@@ -112,151 +110,151 @@ repeat ROWS as r {
 }
 
 // 消去ラインフラグ
-clearingLines = dim(ROWS)
+clearing_lines = dim(ROWS)
 repeat ROWS as r {
-    clearingLines[r] = 0
+    clearing_lines[r] = 0
 }
-clearTimer = 0
+clear_timer = 0
 
 // 7-Bag 乱数生成器
 bag = dim(7)
-bagIndex = 7
+bag_index = 7
 
 // ゲーム変数
-gameState = STATE_PLAY
+game_state = STATE_PLAY
 score = 0
-linesCleared = 0
+lines_cleared = 0
 level = 1
-isRunning = true
+is_running = true
 
 // ピース情報
-piece = {
-    "type": 0,
-    "rot": 0,
-    "col": 3,
-    "row": 0,
-    "blocks": pieceShapes[0][0]
-}
+// 配列で表現: [P_TYPE, P_ROT, P_COL, P_ROW, P_BLOCKS]
+// 型を混ぜられるので、整数と配列を同じ配列に入れられる
+piece = dim(5)
+piece[P_TYPE]   = PIECE_I
+piece[P_ROT]    = 0
+piece[P_COL]    = 3
+piece[P_ROW]    = 0
+piece[P_BLOCKS] = piece_shapes[PIECE_I][0]
 
 // タイマー・カウンタ
-rightDAS = 0
-leftDAS = 0
-ARRTimer = 0
-gravityTimer = 0
-gravityInterval = 60
-lockDelay = 30
-lockResetCount = 0
-lowestRow = 0
-minoImg = 0
-sfxMove = 0
+right_das = 0
+left_das = 0
+arr_timer = 0
+gravity_timer = 0
+gravity_interval = 60
+lock_delay = 30
+lock_reset_count = 0
+lowest_row = 0
+mino_img = 0
+sfx_move = 0
 
 // キーフラグ
-wasRightPressed = false
-wasLeftPressed = false
-wasUpPressed = false
-wasDownPressed = false
-wasZPressed = false
-wasXPressed = false
-wasSpacePressed = false
-wasEscPressed = false
+was_right_pressed = false
+was_left_pressed = false
+was_up_pressed = false
+was_down_pressed = false
+was_z_pressed = false
+was_x_pressed = false
+was_space_pressed = false
+was_esc_pressed = false
 
-def getKickId(fromRot, toRot) {
-    if fromRot == 0 && toRot == 1 { return 0 }
-    if fromRot == 1 && toRot == 0 { return 1 }
-    if fromRot == 1 && toRot == 2 { return 2 }
-    if fromRot == 2 && toRot == 1 { return 3 }
-    if fromRot == 2 && toRot == 3 { return 4 }
-    if fromRot == 3 && toRot == 2 { return 5 }
-    if fromRot == 3 && toRot == 0 { return 6 }
-    if fromRot == 0 && toRot == 3 { return 7 }
-    return 0
+def get_kick_id(from_rot, to_rot) {
+    if from_rot == 0 && to_rot == 1 { return 0 }
+    if from_rot == 1 && to_rot == 0 { return 1 }
+    if from_rot == 1 && to_rot == 2 { return 2 }
+    if from_rot == 2 && to_rot == 1 { return 3 }
+    if from_rot == 2 && to_rot == 3 { return 4 }
+    if from_rot == 3 && to_rot == 2 { return 5 }
+    if from_rot == 3 && to_rot == 0 { return 6 }
+    if from_rot == 0 && to_rot == 3 { return 7 }
+    return
 }
 
-def getNextPieceType() {
-    if bagIndex >= 7 {
+def get_next_piece_type() {
+    if bag_index >= 7 {
         repeat 7 as i {
             bag[i] = i
         }
         repeat 7 as i {
-            swapIdx = rnd(7 - i) + i
+            swap_idx = rnd(7 - i) + i
             tmp = bag[i]
-            bag[i] = bag[swapIdx]
-            bag[swapIdx] = tmp
+            bag[i] = bag[swap_idx]
+            bag[swap_idx] = tmp
         }
-        bagIndex = 0
+        bag_index = 0
     }
-    nextType = bag[bagIndex]
-    bagIndex += 1
-    return nextType
+    next_type = bag[bag_index]
+    bag_index += 1
+    return next_type
 }
 
-def updateSpeed() {
+def update_speed() {
     idx = level - 1
     if idx > 14 {
         idx = 14
     }
-    gravityInterval = speedTable[idx]
+    gravity_interval = speed_table[idx]
 }
 
-def initGame() {
+def init_game() {
     repeat ROWS as r {
-        clearingLines[r] = 0
+        clearing_lines[r] = 0
         repeat COLS as c {
             field[r][c] = 0
         }
     }
-    clearTimer = 0
+    clear_timer = 0
     score = 0
-    linesCleared = 0
+    lines_cleared = 0
     level = 1
-    updateSpeed()
-    gravityTimer = 0
-    bagIndex = 7
-    gameState = STATE_PLAY
-    spawnPiece()
+    update_speed()
+    gravity_timer = 0
+    bag_index = 7
+    game_state = STATE_PLAY
+    spawn_piece()
 }
 
 // 21段目・22段目へのスポーン処理
-def spawnPiece() {
-    newType = getNextPieceType()
-    piece = {
-        "type": newType,
-        "rot": 0,
-        "col": 3,
-        "row": 0, // row 0: 22段目, row 1: 21段目
-        "blocks": pieceShapes[newType][0]
-    }
-    gravityTimer = 0
-    lockDelay = 30
-    lockResetCount = 0
+def spawn_piece() {
+    new_type = get_next_piece_type()
+    piece[P_TYPE]   = new_type
+    piece[P_ROT]    = 0
+    piece[P_COL]    = 3
+    piece[P_ROW]    = 0   // row 0: 22段目, row 1: 21段目
+    piece[P_BLOCKS] = piece_shapes[new_type][0]
+
+    gravity_timer = 0
+    lock_delay = 30
+    lock_reset_count = 0
 
     // Block Out: スポーン位置に置けない場合はゲームオーバー
-    if canPut(piece.blocks, piece.col, piece.row) == false {
-        gameState = STATE_GAMEOVER
-        return 0
+    if can_put(piece[P_BLOCKS], piece[P_COL], piece[P_ROW]) == false {
+        game_state = STATE_GAMEOVER
+        return
     }
 
     // ガイドライン仕様: 生成直後、障害物がなければ即座に1マス落下して視界へ入る
-    if canMove(0, 1) {
-        piece.row += 1
+    if can_move(0, 1) {
+        piece[P_ROW] += 1
     }
 
-    lowestRow = piece.row
+    lowest_row = piece[P_ROW]
 }
 
-def canPut(blocks, c, r) {
+def can_put(blocks, c, r) {
     repeat 4 as y {
         repeat 4 as x {
             if blocks[y][x] == 1 {
-                targetCol = c + x
-                targetRow = r + y
-                if (targetCol < 0) || (COLS <= targetCol) {
+                target_col = c + x
+                target_row = r + y
+                if (target_col < 0) || (COLS <= target_col) {
                     return false
                 }
-                if (targetRow < 0) || (ROWS <= targetRow) {
+                if (target_row < 0) || (ROWS <= target_row) {
                     return false
                 }
-                if field[targetRow][targetCol] != 0 {
+                if field[target_row][target_col] != 0 {
                     return false
                 }
             }
@@ -265,372 +263,371 @@ def canPut(blocks, c, r) {
     return true
 }
 
-def canMove(dx, dy) {
-    return canPut(piece.blocks, piece.col + dx, piece.row + dy)
+def can_move(dx, dy) {
+    return can_put(piece[P_BLOCKS], piece[P_COL] + dx, piece[P_ROW] + dy)
 }
 
-def notifyLockReset() {
-    if canMove(0, 1) == false {
-        if lockResetCount < MAX_LOCK_RESETS {
-            lockDelay = 30
-            lockResetCount += 1
+def notify_lock_reset() {
+    if can_move(0, 1) == false {
+        if lock_reset_count < MAX_LOCK_RESETS {
+            lock_delay = 30
+            lock_reset_count += 1
         }
     }
 }
 
-def dropPiece() {
-    piece.row += 1
-    if piece.row > lowestRow {
-        lowestRow = piece.row
-        lockResetCount = 0
+def drop_piece() {
+    piece[P_ROW] += 1
+    if piece[P_ROW] > lowest_row {
+        lowest_row = piece[P_ROW]
+        lock_reset_count = 0
     }
 }
 
-def softDrop() {
-    if canMove(0, 1) {
-        dropPiece()
+def soft_drop() {
+    if can_move(0, 1) {
+        drop_piece()
         score += 1
-        lockDelay = 30
+        lock_delay = 30
     }
 }
 
-def hardDrop() {
-    dropDist = 0
-    while canMove(0, 1) {
-        dropPiece()
-        dropDist += 1
+def hard_drop() {
+    drop_dist = 0
+    while can_move(0, 1) {
+        drop_piece()
+        drop_dist += 1
     }
-    score += dropDist * 2
-    lockPiece()
+    score += drop_dist * 2
+    lock_piece()
 }
 
 def rotate(dir) {
-    if piece.type == PIECE_O {
-        return 0
+    if piece[P_TYPE] == PIECE_O {
+        return
     }
 
-    oldRot = piece.rot
-    newRot = (oldRot + dir + 4) % 4
-    nextBlocks = pieceShapes[piece.type][newRot]
-    kickId = getKickId(oldRot, newRot)
+    old_rot = piece[P_ROT]
+    new_rot = (old_rot + dir + 4) % 4
+    next_blocks = piece_shapes[piece[P_TYPE]][new_rot]
+    kick_id = get_kick_id(old_rot, new_rot)
 
     repeat 5 as i {
-        testDx = 0
-        testDy = 0
-        if piece.type == PIECE_I {
-            testDx = kickI[kickId][i][0]
-            testDy = kickI[kickId][i][1]
+        test_dx = 0
+        test_dy = 0
+        if piece[P_TYPE] == PIECE_I {
+            test_dx = kick_i[kick_id][i][0]
+            test_dy = kick_i[kick_id][i][1]
         } else {
-            testDx = kickJLSTZ[kickId][i][0]
-            testDy = kickJLSTZ[kickId][i][1]
+            test_dx = kick_jlstz[kick_id][i][0]
+            test_dy = kick_jlstz[kick_id][i][1]
         }
 
-        if canPut(nextBlocks, piece.col + testDx, piece.row + testDy) {
-            piece.col += testDx
-            piece.row += testDy
-            piece.rot = newRot
-            piece.blocks = nextBlocks
-            notifyLockReset()
+        if can_put(next_blocks, piece[P_COL] + test_dx, piece[P_ROW] + test_dy) {
+            piece[P_COL] += test_dx
+            piece[P_ROW] += test_dy
+            piece[P_ROT] = new_rot
+            piece[P_BLOCKS] = next_blocks
+            notify_lock_reset()
             break
         }
     }
 }
 
-def lockPiece() {
+def lock_piece() {
     // Lock Out 判定: 全ブロックが画面外（21段目以上: r < BUFFER_ROWS）で固定されたらゲームオーバー
-    allAbove = true
+    all_above = true
     repeat 4 as y {
         repeat 4 as x {
-            if piece.blocks[y][x] == 1 {
-                if piece.row + y >= BUFFER_ROWS {
-                    allAbove = false
+            if piece[P_BLOCKS][y][x] == 1 {
+                if piece[P_ROW] + y >= BUFFER_ROWS {
+                    all_above = false
                 }
             }
         }
     }
-    if allAbove {
-        gameState = STATE_GAMEOVER
-        return 0
+    if all_above {
+        game_state = STATE_GAMEOVER
+        return
     }
 
-    fixpiece()
-    
+    fix_piece()
+
     // 揃っているラインの検出
-    hasLine = false
+    has_line = false
     repeat ROWS as r {
-        clearingLines[r] = 0
-        isFull = true
+        clearing_lines[r] = 0
+        is_full = true
         repeat COLS as c {
             if field[r][c] == 0 {
-                isFull = false
+                is_full = false
                 break
             }
         }
-        if isFull {
-            clearingLines[r] = 1
-            hasLine = true
+        if is_full {
+            clearing_lines[r] = 1
+            has_line = true
         }
     }
 
-    if hasLine {
-        clearTimer = 10
+    if has_line {
+        clear_timer = 10
     } else {
-        spawnPiece()
+        spawn_piece()
     }
 }
 
-def fixpiece() {
+def fix_piece() {
     repeat 4 as y {
         repeat 4 as x {
-            if piece.blocks[y][x] == 1 {
-                targetY = piece.row + y
-                targetX = piece.col + x
-                if targetY >= 0 && targetY < ROWS && targetX >= 0 && targetX < COLS {
-                    field[targetY][targetX] = 1
+            if piece[P_BLOCKS][y][x] == 1 {
+                target_y = piece[P_ROW] + y
+                target_x = piece[P_COL] + x
+                if target_y >= 0 && target_y < ROWS && target_x >= 0 && target_x < COLS {
+                    field[target_y][target_x] = 1
                 }
             }
         }
     }
 }
 
-def finishLineClear() {
-    clearedCount = 0
+def finish_line_clear() {
+    cleared_count = 0
     r = ROWS - 1
     while r >= 0 {
-        if clearingLines[r] == 1 {
-            clearedCount += 1
-            shiftR = r
-            while shiftR > 0 {
+        if clearing_lines[r] == 1 {
+            cleared_count += 1
+            shift_r = r
+            while shift_r > 0 {
                 repeat COLS as c {
-                    field[shiftR][c] = field[shiftR - 1][c]
+                    field[shift_r][c] = field[shift_r - 1][c]
                 }
-                clearingLines[shiftR] = clearingLines[shiftR - 1]
-                shiftR -= 1
+                clearing_lines[shift_r] = clearing_lines[shift_r - 1]
+                shift_r -= 1
             }
             repeat COLS as c {
                 field[0][c] = 0
             }
-            clearingLines[0] = 0
+            clearing_lines[0] = 0
         } else {
             r -= 1
         }
     }
 
     // 本家スコアリング (基本点 × 現在のレベル)
-    if clearedCount == 1 { score += 100 * level }
-    if clearedCount == 2 { score += 300 * level }
-    if clearedCount == 3 { score += 500 * level }
-    if clearedCount == 4 { score += 800 * level }
-    
-    linesCleared += clearedCount
+    if cleared_count == 1 { score += 100 * level }
+    if cleared_count == 2 { score += 300 * level }
+    if cleared_count == 3 { score += 500 * level }
+    if cleared_count == 4 { score += 800 * level }
+
+    lines_cleared += cleared_count
 
     // 10ライン消去ごとにレベルアップ＆落下速度更新
-    newLevel = (linesCleared / 10) + 1
-    if newLevel != level {
-        level = newLevel
-        updateSpeed()
+    new_level = (lines_cleared / 10) + 1
+    if new_level != level {
+        level = new_level
+        update_speed()
     }
 
     repeat ROWS as i {
-        clearingLines[i] = 0
+        clearing_lines[i] = 0
     }
 
-    spawnPiece()
+    spawn_piece()
 }
 
-def handleInput() {
+def handle_input() {
     // ESCキー (ポーズ / 終了)
     if getkey(27) {
-        if wasEscPressed == false {
-            if gameState == STATE_PLAY {
-                gameState = STATE_PAUSE
+        if was_esc_pressed == false {
+            if game_state == STATE_PLAY {
+                game_state = STATE_PAUSE
             } else {
-                if gameState == STATE_PAUSE {
-                    gameState = STATE_PLAY
+                if game_state == STATE_PAUSE {
+                    game_state = STATE_PLAY
                 } else {
-                    if gameState == STATE_GAMEOVER {
-                        isRunning = false
+                    if game_state == STATE_GAMEOVER {
+                        is_running = false
                     }
                 }
             }
         }
-        wasEscPressed = true
+        was_esc_pressed = true
     } else {
-        wasEscPressed = false
+        was_esc_pressed = false
     }
 
     // ゲームオーバー画面操作
-    if gameState == STATE_GAMEOVER {
+    if game_state == STATE_GAMEOVER {
         if getkey(82) { // Rキー
-            initGame()
+            init_game()
         }
         if getkey(81) { // Qキー
-            isRunning = false
+            is_running = false
         }
-        return 0
+        return
     }
 
-    if gameState == STATE_PAUSE || clearTimer > 0 {
-        return 0
+    if game_state == STATE_PAUSE || clear_timer > 0 {
+        return
     }
 
     // 右矢印キー
     if getkey(39) {
-        if wasRightPressed == false {
-            if canMove(1, 0) {
-                piece.col += 1
-                notifyLockReset()
-                mmplay(sfxMove)
+        if was_right_pressed == false {
+            if can_move(1, 0) {
+                piece[P_COL] += 1
+                notify_lock_reset()
+                mmplay(sfx_move)
             }
-            rightDAS = 0
+            right_das = 0
         } else {
-            rightDAS += 1
-            if rightDAS >= DAS && (rightDAS - DAS) % ARR == 0 {
-                if canMove(1, 0) {
-                    piece.col += 1
-                    notifyLockReset()
-                    mmplay(sfxMove)
+            right_das += 1
+            if right_das >= DAS && (right_das - DAS) % ARR == 0 {
+                if can_move(1, 0) {
+                    piece[P_COL] += 1
+                    notify_lock_reset()
+                    mmplay(sfx_move)
                 }
             }
         }
-        wasRightPressed = true
+        was_right_pressed = true
     } else {
-        wasRightPressed = false
-        rightDAS = 0
+        was_right_pressed = false
+        right_das = 0
     }
 
     // 左矢印キー
     if getkey(37) {
-        if wasLeftPressed == false {
-            if canMove(-1, 0) {
-                piece.col -= 1
-                notifyLockReset()
-                mmplay(sfxMove)
+        if was_left_pressed == false {
+            if can_move(-1, 0) {
+                piece[P_COL] -= 1
+                notify_lock_reset()
+                mmplay(sfx_move)
             }
-            leftDAS = 0
+            left_das = 0
         } else {
-            leftDAS += 1
-            if leftDAS >= DAS && (leftDAS - DAS) % ARR == 0 {
-                if canMove(-1, 0) {
-                    piece.col -= 1
-                    notifyLockReset()
-                    mmplay(sfxMove)
+            left_das += 1
+            if left_das >= DAS && (left_das - DAS) % ARR == 0 {
+                if can_move(-1, 0) {
+                    piece[P_COL] -= 1
+                    notify_lock_reset()
+                    mmplay(sfx_move)
                 }
             }
         }
-        wasLeftPressed = true
+        was_left_pressed = true
     } else {
-        wasLeftPressed = false
-        leftDAS = 0
+        was_left_pressed = false
+        left_das = 0
     }
 
     // 上矢印キー (右回転)
     if getkey(38) {
-        if wasUpPressed == false {
+        if was_up_pressed == false {
             rotate(RIGHT)
         }
-        wasUpPressed = true
+        was_up_pressed = true
     } else {
-        wasUpPressed = false
+        was_up_pressed = false
     }
 
     // 下矢印キー (ソフトドロップ)
     if getkey(40) {
-        ARRTimer += 1
-        if ARRTimer >= ARR {
-            ARRTimer = 0
-            softDrop()
+        arr_timer += 1
+        if arr_timer >= ARR {
+            arr_timer = 0
+            soft_drop()
         }
-        wasDownPressed = true
+        was_down_pressed = true
     } else {
-        wasDownPressed = false
+        was_down_pressed = false
     }
 
     // Zキー (左回転)
     if getkey(90) {
-        if wasZPressed == false {
+        if was_z_pressed == false {
             rotate(LEFT)
         }
-        wasZPressed = true
+        was_z_pressed = true
     } else {
-        wasZPressed = false
+        was_z_pressed = false
     }
 
     // Xキー (右回転)
     if getkey(88) {
-        if wasXPressed == false {
+        if was_x_pressed == false {
             rotate(RIGHT)
         }
-        wasXPressed = true
+        was_x_pressed = true
     } else {
-        wasXPressed = false
+        was_x_pressed = false
     }
 
     // スペースキー (ハードドロップ)
     if getkey(32) {
-        if wasSpacePressed == false {
-            hardDrop()
-            mmplay(sfxHardDrop)
+        if was_space_pressed == false {
+            hard_drop()
         }
-        wasSpacePressed = true
+        was_space_pressed = true
     } else {
-        wasSpacePressed = false
+        was_space_pressed = false
     }
 }
 
 def update() {
-    if gameState != STATE_PLAY {
-        return 0
+    if game_state != STATE_PLAY {
+        return
     }
 
-    if clearTimer > 0 {
-        clearTimer -= 1
-        if clearTimer == 0 {
-            finishLineClear()
+    if clear_timer > 0 {
+        clear_timer -= 1
+        if clear_timer == 0 {
+            finish_line_clear()
         }
-        return 0
+        return
     }
 
     // 接地中のロック猶予カウント
-    if canMove(0, 1) == false {
-        lockDelay -= 1
-        if lockDelay <= 0 {
-            lockPiece()
-            return 0
+    if can_move(0, 1) == false {
+        lock_delay -= 1
+        if lock_delay <= 0 {
+            lock_piece()
+            return
         }
     }
 
     // 通常落下
-    gravityTimer += 1
-    if gravityTimer >= gravityInterval {
-        gravityTimer = 0
-        if canMove(0, 1) {
-            dropPiece()
+    gravity_timer += 1
+    if gravity_timer >= gravity_interval {
+        gravity_timer = 0
+        if can_move(0, 1) {
+            drop_piece()
         }
     }
 }
 
 // 画面内（r >= BUFFER_ROWS）のみ描画
-def drawBlock(c, r) {
+def draw_block(c, r) {
     if r < BUFFER_ROWS {
-        return 0
+        return
     }
     px = c * MINO_SIZE
     py = (r - BUFFER_ROWS) * MINO_SIZE
     pos(px, py)
-    gcopy(minoImg, 0, 0, MINO_SIZE, MINO_SIZE)
+    gcopy(mino_img, 0, 0, MINO_SIZE, MINO_SIZE)
 }
 
-def drawField() {
+def draw_field() {
     repeat ROWS as r {
         if r >= BUFFER_ROWS {
-            if clearTimer > 0 && clearingLines[r] == 1 {
+            if clear_timer > 0 && clearing_lines[r] == 1 {
                 color(255, 255, 255)
                 boxf(0, (r - BUFFER_ROWS) * MINO_SIZE, COLS * MINO_SIZE, (r - BUFFER_ROWS + 1) * MINO_SIZE)
             } else {
                 repeat COLS as c {
                     if field[r][c] != 0 {
-                        drawBlock(c, r)
+                        draw_block(c, r)
                     }
                 }
             }
@@ -638,11 +635,11 @@ def drawField() {
     }
 }
 
-def drawPiece() {
+def draw_piece() {
     repeat 4 as y {
         repeat 4 as x {
-            if piece.blocks[y][x] == 1 {
-                drawBlock(piece.col + x, piece.row + y)
+            if piece[P_BLOCKS][y][x] == 1 {
+                draw_block(piece[P_COL] + x, piece[P_ROW] + y)
             }
         }
     }
@@ -650,10 +647,10 @@ def drawPiece() {
 
 def draw() {
     cls()
-    drawField()
+    draw_field()
 
-    if gameState == STATE_PLAY && clearTimer == 0 {
-        drawPiece()
+    if game_state == STATE_PLAY && clear_timer == 0 {
+        draw_piece()
     }
 
     // 常時画面最上部にステータスを小さく表示
@@ -662,7 +659,7 @@ def draw() {
     mes("Lv:" + level + " Sc:" + score)
 
     // ポーズ表示
-    if gameState == STATE_PAUSE {
+    if game_state == STATE_PAUSE {
         color(255, 255, 255)
         pos(36, 120)
         mes("== PAUSED ==")
@@ -671,7 +668,7 @@ def draw() {
     }
 
     // ゲームオーバー表示
-    if gameState == STATE_GAMEOVER {
+    if game_state == STATE_GAMEOVER {
         color(255, 60, 60)
         pos(38, 80)
         mes("GAME OVER")
@@ -682,7 +679,7 @@ def draw() {
         pos(32, 130)
         mes("Score: " + score)
         pos(32, 150)
-        mes("Lines: " + linesCleared)
+        mes("Lines: " + lines_cleared)
 
         pos(32, 190)
         mes("[R] : Retry")
@@ -695,16 +692,18 @@ def main() {
     // 画面サイズは拡張せず、元の 10×20 マス（160×320）を維持
     screen(MINO_SIZE * COLS, MINO_SIZE * VISIBLE_ROWS)
     title("Tetris")
-    minoImg = picload("examples/assets/mino.png")
-    sfxMove = mmload("examples/assets/sfx_move.mp3")
-    initGame()
+    mino_img = picload("examples/assets/mino.png")
+    sfx_move = mmload("examples/assets/sfx_move.mp3")
+    init_game()
 
-    while isRunning {
-        handleInput()
+    while is_running {
+        handle_input()
         update()
         draw()
         await(1)
     }
+    return
 }
 
 main()
+end()

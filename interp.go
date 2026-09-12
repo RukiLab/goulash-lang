@@ -17,8 +17,7 @@ import (
 //   - `;` is rejected by the parser.
 //   - Array writes are bounds-checked: allocate with dim(), a literal,
 //     or push(); out-of-range and missing bases are errors, never
-//     auto-created. Map writes create missing keys; map reads of
-//     missing keys (both ["k"] and .k) are errors.
+//     auto-created.
 //   - `b = a` shares the array (reference semantics).
 //   - `+` with either side a string concatenates via stringify.
 
@@ -548,16 +547,6 @@ func (in *Interp) assign(target Expr, v Value, env *Env) error {
 		return env.Assign(t.Name, v, t.At)
 	case *IndexExpr:
 		return in.assignIndex(t, v, env)
-	case *FieldExpr:
-		base, err := in.evalExpr(t.Base, env)
-		if err != nil {
-			return err
-		}
-		if base.K != KMap {
-			return rtErrf(t.At, "フィールド %q に代入できません：値は %s であり、map ではありません", t.Field, typeNameOf(base))
-		}
-		SetMap(base.Mp, t.Field, v)
-		return nil
 	}
 	return rtErrf(target.Pos(), "'=' の左辺に代入できません")
 }
@@ -567,10 +556,6 @@ func (in *Interp) assignIndex(t *IndexExpr, v Value, env *Env) error {
 	if err != nil {
 		return err
 	}
-	// Map path (string keys), including nested m["a"]["b"].
-	if idxv.K == KString {
-		return in.assignMapIndex(t, idxv.S, v, env)
-	}
 	if idxv.K != KInt {
 		return rtErrf(t.Index.Pos(), "配列のインデックスは整数である必要があります。%s が指定されました", typeNameOf(idxv))
 	}
@@ -579,7 +564,6 @@ func (in *Interp) assignIndex(t *IndexExpr, v Value, env *Env) error {
 	}
 	idx := int(idxv.I)
 	// Nested target like a[0][1]: resolve the inner base to an array value.
-	// A map under an int index (m["a"][0]) resolves symmetrically.
 	if inner, ok := t.Base.(*IndexExpr); ok {
 		base, err := in.evalExpr(inner.Base, env)
 		if err != nil {
@@ -588,19 +572,6 @@ func (in *Interp) assignIndex(t *IndexExpr, v Value, env *Env) error {
 		midv, err := in.evalExpr(inner.Index, env)
 		if err != nil {
 			return err
-		}
-		if base.K == KMap {
-			if midv.K != KString {
-				return rtErrf(inner.Index.Pos(), "map のキーは文字列である必要があります。%s が指定されました", typeNameOf(midv))
-			}
-			elem, ok := base.Mp.Fields[midv.S]
-			if !ok || elem.K != KArray {
-				return rtErrf(inner.At, "%s にインデックスでアクセスできません（[...] は配列と map に対応しています）", typeNameOf(elem))
-			}
-			if err := setIndex(elem.Arr, idx, v, t.At); err != nil {
-				return err
-			}
-			return nil
 		}
 		arr, err := in.indexBaseForWrite(inner, base, env)
 		if err != nil {
@@ -614,7 +585,7 @@ func (in *Interp) assignIndex(t *IndexExpr, v Value, env *Env) error {
 		}
 		elem := arr.Elems[int(midv.I)]
 		if elem.K != KArray {
-			return rtErrf(inner.At, "%s にインデックスでアクセスできません（[...] は配列と map に対応しています）", typeNameOf(elem))
+			return rtErrf(inner.At, "%s にインデックスでアクセスできません（[...] は配列に対応しています）", typeNameOf(elem))
 		}
 		if err := setIndex(elem.Arr, idx, v, t.At); err != nil {
 			return err
@@ -635,74 +606,6 @@ func (in *Interp) assignIndex(t *IndexExpr, v Value, env *Env) error {
 	return nil
 }
 
-// assignMapIndex implements `m["k"] = v` (string keys). Missing keys are
-// created; nested targets like m["a"]["b"] or a[0]["b"] resolve one level
-// (a missing middle is an error, never auto-created).
-func (in *Interp) assignMapIndex(t *IndexExpr, key string, v Value, env *Env) error {
-	if inner, ok := t.Base.(*IndexExpr); ok {
-		base, err := in.evalExpr(inner.Base, env)
-		if err != nil {
-			return err
-		}
-		midv, err := in.evalExpr(inner.Index, env)
-		if err != nil {
-			return err
-		}
-		if base.K == KArray {
-			if midv.K != KInt {
-				return rtErrf(inner.Index.Pos(), "配列のインデックスは整数である必要があります。%s が指定されました", typeNameOf(midv))
-			}
-			if midv.I < 0 || int(midv.I) >= len(base.Arr.Elems) {
-				return rtErrf(inner.At, "インデックス %d は範囲外です（長さ %d）", midv.I, len(base.Arr.Elems))
-			}
-			elem := base.Arr.Elems[int(midv.I)]
-			if elem.K != KMap {
-				return rtErrf(inner.At, "%s にインデックスでアクセスできません（[...] は配列と map に対応しています）", typeNameOf(elem))
-			}
-			SetMap(elem.Mp, key, v)
-			return nil
-		}
-		if base.K != KMap {
-			return rtErrf(inner.At, "%s にインデックスでアクセスできません（[...] は配列と map に対応しています）", typeNameOf(base))
-		}
-		if midv.K != KString {
-			return rtErrf(inner.Index.Pos(), "map のキーは文字列である必要があります。%s が指定されました", typeNameOf(midv))
-		}
-		elem, ok := base.Mp.Fields[midv.S]
-		if !ok || elem.K != KMap {
-			return rtErrf(inner.At, "%s にインデックスでアクセスできません（[...] は配列と map に対応しています）", typeNameOf(elem))
-		}
-		SetMap(elem.Mp, key, v)
-		return nil
-	}
-	base, err := in.evalExpr(t.Base, env)
-	if err != nil {
-		// Auto-create: `m["k"] = v` with undefined `m` makes a map.
-		if _, ok := err.(*RuntimeError); ok {
-			if bv, isVar := t.Base.(*VarExpr); isVar && isUndefinedVar(err, bv.Name) {
-				mv := MapOf()
-				SetMap(mv.Mp, key, v)
-				env.Define(bv.Name, mv)
-				return nil
-			}
-		}
-		return err
-	}
-	if base.K == KNull {
-		if bv, ok := t.Base.(*VarExpr); ok {
-			mv := MapOf()
-			SetMap(mv.Mp, key, v)
-			env.Define(bv.Name, mv)
-			return nil
-		}
-	}
-	if base.K != KMap {
-		return rtErrf(t.At, "%s にインデックスでアクセスできません（[...] は配列と map に対応しています）", typeNameOf(base))
-	}
-	SetMap(base.Mp, key, v)
-	return nil
-}
-
 // indexBaseForWrite resolves the array being written through [...] (single level).
 // The array must already exist (dim, literal, or push); out-of-range and
 // missing bases are errors, never auto-created.
@@ -710,7 +613,7 @@ func (in *Interp) indexBaseForWrite(t *IndexExpr, base Value, env *Env) (*Array,
 	if base.K == KArray {
 		return base.Arr, nil
 	}
-	return nil, rtErrf(t.At, "%s にインデックスでアクセスできません（[...] は配列と map に対応しています）", typeNameOf(base))
+	return nil, rtErrf(t.At, "%s にインデックスでアクセスできません（[...] は配列に対応しています）", typeNameOf(base))
 }
 
 // setIndex stores within bounds; out-of-range is an error.
@@ -721,14 +624,6 @@ func setIndex(arr *Array, idx int, v Value, at Pos) error {
 	}
 	arr.Elems[idx] = v
 	return nil
-}
-
-func isUndefinedVar(err error, name string) bool {
-	re, ok := err.(*RuntimeError)
-	if !ok {
-		return false
-	}
-	return strings.Contains(re.Msg, fmt.Sprintf("未定義の変数 %q です", name)) || strings.Contains(re.Msg, fmt.Sprintf("undefined variable %q", name))
 }
 
 // ---------- expressions ----------
@@ -761,23 +656,6 @@ func (in *Interp) evalExpr(x Expr, env *Env) (Value, error) {
 			elems[i] = v
 		}
 		return ArrayOf(elems), nil
-	case *MapLit:
-		mv := MapOf()
-		for _, f := range n.Fields {
-			kv, err := in.evalExpr(f.Key, env)
-			if err != nil {
-				return Null(), err
-			}
-			if kv.K != KString {
-				return Null(), rtErrf(f.Key.Pos(), "map のキーは文字列である必要があります。%s が指定されました", typeNameOf(kv))
-			}
-			v, err := in.evalExpr(f.Value, env)
-			if err != nil {
-				return Null(), err
-			}
-			SetMap(mv.Mp, kv.S, v) // later keys win
-		}
-		return mv, nil
 	case *IndexExpr:
 		base, err := in.evalExpr(n.Base, env)
 		if err != nil {
@@ -787,21 +665,11 @@ func (in *Interp) evalExpr(x Expr, env *Env) (Value, error) {
 		if err != nil {
 			return Null(), err
 		}
-		if base.K == KMap {
-			if idxv.K != KString {
-				return Null(), rtErrf(n.Index.Pos(), "map のキーは文字列である必要があります。%s が指定されました", typeNameOf(idxv))
-			}
-			v, ok := base.Mp.Fields[idxv.S]
-			if !ok {
-				return Null(), rtErrf(n.At, "map にキー %q がありません", idxv.S)
-			}
-			return v, nil
-		}
 		if idxv.K != KInt {
 			return Null(), rtErrf(n.Index.Pos(), "配列のインデックスは整数である必要があります。%s が指定されました", typeNameOf(idxv))
 		}
 		if base.K != KArray {
-			return Null(), rtErrf(n.At, "%s にインデックスでアクセスできません（[...] は配列と map に対応しています）", typeNameOf(base))
+			return Null(), rtErrf(n.At, "%s にインデックスでアクセスできません（[...] は配列に対応しています）", typeNameOf(base))
 		}
 		if idxv.I < 0 {
 			return Null(), rtErrf(n.Index.Pos(), "配列のインデックスは 0 以上である必要があります。%d が指定されました", idxv.I)
@@ -810,19 +678,6 @@ func (in *Interp) evalExpr(x Expr, env *Env) (Value, error) {
 			return Null(), rtErrf(n.At, "インデックス %d は範囲外です（長さ %d）", idxv.I, len(base.Arr.Elems))
 		}
 		return base.Arr.Elems[int(idxv.I)], nil
-	case *FieldExpr:
-		base, err := in.evalExpr(n.Base, env)
-		if err != nil {
-			return Null(), err
-		}
-		if base.K != KMap {
-			return Null(), rtErrf(n.At, "%s のフィールド %q にアクセスできません（'.' は map のみ対応しています）", typeNameOf(base), n.Field)
-		}
-		v, ok := base.Mp.Fields[n.Field]
-		if !ok {
-			return Null(), rtErrf(n.At, "map にキー %q がありません", n.Field)
-		}
-		return v, nil
 	case *CallExpr:
 		return in.evalCall(n, env)
 	case *UnaryExpr:

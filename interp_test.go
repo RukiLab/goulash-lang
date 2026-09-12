@@ -154,7 +154,7 @@ func TestCompoundAssign(t *testing.T) {
 	mustOut(t, "x = 6\nx &= 3\nmes(x)\nx |= 8\nmes(x)\nx ^= 7\nmes(x)\nx <<= 2\nmes(x)\nx >>= 1\nmes(x)\n", "2\n10\n13\n52\n26\n")
 	mustOut(t, "s = \"a\"\ns += \"b\"\nmes(s)\nf = 1.5\nf += 1\nmes(f)\n", "ab\n2.5\n")
 	mustOut(t, "a = [1, 2]\na[0] += 10\na[1] *= 3\nmes(a)\n", "[11, 6]\n")
-	mustOut(t, "p = {\"n\": 1}\np.n += 41\nmes(p.n)\n", "42\n")
+	mustOut(t, "p = [[1]]\np[0][0] += 41\nmes(p[0][0])\n", "42\n")
 	mustErr(t, "x = 1\nx += true\n", "加算できません")
 	mustErr(t, "x = 1.5\nx &= 1\n", "整数が必要です")
 	mustErr(t, "x = 1\nx /= 0\n", "0 による除算")
@@ -199,31 +199,22 @@ func TestRepeatArray(t *testing.T) {
 	mustOut(t, "a = [1]\nrepeat a as x {\npush(a, 2)\nmes(x)\n}\nmes(length(a))\n", "1\n2\n")
 }
 
-func TestMap(t *testing.T) {
-	mustOut(t, "m = {\"a\": 1, \"b\": 2}\nmes(m)\nmes(m[\"a\"])\n", "{\"a\": 1, \"b\": 2}\n1\n")
-	mustOut(t, "m = {}\nmes(m)\nmes(has(m, \"missing\"))\n", "{}\nfalse\n")
-	mustErr(t, "m = {}\nmes(m[\"missing\"])\n", "キー")
-	mustOut(t, "mes({\"a\": 1, \"a\": 2})\n", "{\"a\": 2}\n")
-	mustOut(t, "m = {\"a\": 1}\nm[\"b\"] = 2\nm[\"a\"] = 10\nmes(m)\n", "{\"a\": 10, \"b\": 2}\n")
-	mustOut(t, "m = {\"a\": {\"b\": 5}}\nmes(m[\"a\"][\"b\"])\nm[\"a\"][\"b\"] = 6\nmes(m[\"a\"][\"b\"])\n", "5\n6\n")
-	mustOut(t, "m = {}\nm[\"k\"] = 1\nmes(m)\n", "{\"k\": 1}\n")
-	mustOut(t, "a = [{\"x\": 1}]\nmes(a[0][\"x\"])\na[0][\"x\"] = 2\nmes(a[0][\"x\"])\n", "1\n2\n")
-	mustOut(t, "m = {\"b\": 2, \"a\": 1}\nmes(keys(m))\nmes(has(m, \"a\"))\nmes(has(m, \"z\"))\n", "[b, a]\ntrue\nfalse\n")
-	mustOut(t, "m = {\"a\": 1, \"b\": 2}\ndel(m, \"a\")\nmes(m)\nmes(keys(m))\ndel(m, \"zz\")\nmes(m)\n", "{\"b\": 2}\n[b]\n{\"b\": 2}\n")
-	mustOut(t, "mes({\"a\": 1} == {\"a\": 1})\nmes({\"a\": 1} == {\"a\": 2})\nmes(vartype({}))\n", "true\nfalse\nmap\n")
-	mustOut(t, "m = {\"a\": 1}\nn = m\nn[\"a\"] = 9\nmes(m)\n", "{\"a\": 9}\n")
-	mustErr(t, "m = {1: \"a\"}\n", "キーは文字列")
-	mustErr(t, "m = {\"a\" 1}\n", "キー : 値")
-	mustErr(t, "m = {\"a\": 1\n", "'}'")
-	mustErr(t, "m = {\"a\": 1}\nmes(m[0])\n", "キーは文字列")
-	mustOut(t, "m = {\"a\": 1}\nmes(m.a)\nm.a = 2\nm.b = 3\nmes(m)\n", "1\n{\"a\": 2, \"b\": 3}\n")
-	mustErr(t, "m = {}\nmes(m.nope)\n", "キー")
-	mustErr(t, "x = 1\nmes(x.name)\n", "map のみ対応")
-	mustErr(t, "x = 1\nx.name = 2\n", "map ではありません")
-	mustErr(t, "m = [1]\nm[\"a\"] = 2\n", "配列と map")
-	mustErr(t, "m = {\"a\": 1}\nm[\"a\"][\"b\"] = 2\n", "配列と map")
-	mustErr(t, "mes(keys([1]))\n", "map である必要があります")
-	mustErr(t, "x = 1\nmes(x[0])\n", "配列と map")
+func TestMapAbolished(t *testing.T) {
+	// Map literals are parse errors.
+	mustErr(t, "m = {\"a\": 1}\n", "廃止")
+	mustErr(t, "m = {}\n", "廃止")
+	// Field access is a parse error.
+	mustErr(t, "mes(m.a)\n", "廃止")
+	mustErr(t, "m.a = 2\n", "廃止")
+	// String indexes are integer-index errors, not map lookups.
+	mustErr(t, "m = [1]\nm[\"a\"] = 2\n", "整数である必要があります")
+	mustErr(t, "m = [1]\nmes(m[\"a\"])\n", "整数である必要があります")
+	// Map builtins are gone.
+	mustErr(t, "mes(keys([1]))\n", "未定義の関数")
+	mustErr(t, "mes(has([1], \"a\"))\n", "未定義の関数")
+	mustErr(t, "del([1], \"a\")\n", "未定義の関数")
+	// vartype has no map.
+	mustOut(t, "mes(vartype([1]))\n", "array\n")
 }
 
 func TestRadixLiterals(t *testing.T) {
@@ -252,7 +243,7 @@ func TestArrays(t *testing.T) {
 	mustErr(t, "a = [1]\nmes(a[0.5])\n", "整数である必要があります")
 	mustErr(t, "a = [1]\nmes(a[-1])\n", "0 以上")
 	mustErr(t, "a = [1]\na(0)\n", "[...]")
-	mustErr(t, "x = 1\nmes(x[0])\n", "配列と map")
+	mustErr(t, "x = 1\nmes(x[0])\n", "配列に対応しています")
 	mustErr(t, "dim()\n", "1 個")
 	mustErr(t, "dim(-1)\n", "0 以上")
 	mustErr(t, "dim(\"x\")\n", "整数である必要があります")
@@ -295,17 +286,6 @@ func TestMes(t *testing.T) {
 	mustOut(t, "mes(\"a\", 1)\n", "a 1\n")
 }
 
-func TestMapDot(t *testing.T) {
-	mustOut(t, "p = {\"name\": \"Alice\", \"age\": 20}\nmes(p.name)\nmes(p.age)\n", "Alice\n20\n")
-	mustOut(t, "p = {\"name\": \"A\", \"age\": 1}\np.name = \"Bob\"\np.age = 25\nmes(p)\n", "{\"name\": Bob, \"age\": 25}\n")
-	mustOut(t, "people = [{\"name\": \"A\"}, {\"name\": \"B\"}]\nmes(people[0].name)\nmes(people[1].name)\n", "A\nB\n")
-	mustOut(t, "data = [[{\"name\": \"X\"}]]\nmes(data[0][0].name)\n", "X\n")
-	mustOut(t, "m = {}\nm.new = 1\nmes(m.new)\n", "1\n")
-	mustErr(t, "m = {}\nmes(m.nope)\n", "キー")
-	mustErr(t, "x = 1\nmes(x.name)\n", "map のみ対応")
-	mustErr(t, "m = {\"a\": 1}\nmes(m.a.b)\n", "map のみ対応")
-}
-
 func TestCommentsAndNewlines(t *testing.T) {
 	mustOut(t, "// hello\n/* multi\nline */\nmes(1)\nmes(2)\n", "1\n2\n")
 	mustErr(t, "mes(1);\n", "セミコロン")
@@ -323,8 +303,32 @@ func TestFormerKeywordsAreIdents(t *testing.T) {
 	mustOut(t, "enum Color { Red, Green = 5, Blue }\nmes(Color_Red)\nmes(Color_Green)\nmes(Color_Blue)\n", "0\n5\n6\n")
 	mustOut(t, "enum { A, B }\nmes(A)\nmes(B)\n", "0\n1\n")
 	mustOut(t, "enum = 5\nmes(enum)\n", "5\n")
-	mustOut(t, "m = {\"Red\": 7}\nmes(m.Red)\nenum C { Red, }\nmes(C_Red)\nmes(m.Red)\n", "7\n0\n7\n")
 	mustErr(t, "mes(X_Q)\nenum X { Q }\n", "未定義の変数")
+}
+
+// The enum pre-pass never rewrites identifiers after a dot, even
+// though dotted access itself no longer parses.
+func TestEnumPrepassSkipsDot(t *testing.T) {
+	toks, err := Lex("m.Red\nenum C { Red, }\nmes(C_Red)\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	toks, err = expandEnums(toks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seenDotRed, seenConst := false, false
+	for i, tk := range toks {
+		if tk.Type == TokDot && i+1 < len(toks) && toks[i+1].Lit == "Red" && toks[i+1].Type == TokIdent {
+			seenDotRed = true
+		}
+		if tk.Type == TokInt && tk.Lit == "0" {
+			seenConst = true // C_Red rewritten to its value
+		}
+	}
+	if !seenDotRed || !seenConst {
+		t.Fatalf("dotRed=%v const=%v", seenDotRed, seenConst)
+	}
 }
 
 func TestSample19Golden(t *testing.T) {

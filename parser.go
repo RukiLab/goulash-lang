@@ -565,7 +565,7 @@ func compoundOp(t TokenType) (TokenType, bool) {
 
 func assignable(x Expr) bool {
 	switch x.(type) {
-	case *VarExpr, *IndexExpr, *FieldExpr:
+	case *VarExpr, *IndexExpr:
 		return true
 	}
 	return false
@@ -575,7 +575,7 @@ func assignable(x Expr) bool {
 // litOK marks value positions: a bare `Name{...}` there is an error,
 // while conditions (`if` cond, `repeat` count) pass false so `if x {`
 // reads as condition + block. Bracketed contexts (calls, indexes,
-// groups, array/map literals) always reset to true.
+// groups, array literals) always reset to true.
 
 func (p *parser) parseOr(litOK bool) (Expr, error) {
 	l, err := p.parseAnd(litOK)
@@ -827,12 +827,7 @@ func (p *parser) parsePostfix(litOK bool) (Expr, error) {
 			}
 			x = &IndexExpr{Base: x, Index: idx, At: posOf(open)}
 		case TokDot:
-			dot := p.next()
-			f, err := p.expect(TokIdent)
-			if err != nil {
-				return nil, p.errAt(p.peek(), "'.' の後にフィールド名が必要です")
-			}
-			x = &FieldExpr{Base: x, Field: f.Lit, At: posOf(dot)}
+			return nil, p.errAt(p.peek(), "フィールドアクセス（a.b）は廃止されました")
 		default:
 			return x, nil
 		}
@@ -890,57 +885,11 @@ func (p *parser) parsePrimary(litOK bool) (Expr, error) {
 		}
 		return x, nil
 	case TokLBrace:
-		// Expression position never holds a block, so `{...}` is
-		// always a map literal here — except an empty `{}` in
-		// condition position (`if {`), which means a missing
-		// condition, not an empty map.
-		return p.parseMapLit(litOK)
+		// Map literals are abolished: `{...}` in expression position
+		// is an error (blocks belong to if/while/def/... statements).
+		return nil, p.errAt(t, "mapリテラルは廃止されました。'{' はブロックにのみ使用できます")
 	default:
 		return nil, p.errAt(t, "予期しない %s です。式が必要です", describeToken(t))
-	}
-}
-
-func (p *parser) parseMapLit(litOK bool) (Expr, error) {
-	open := p.next() // '{'
-	lit := &MapLit{At: posOf(open)}
-	p.skipNewlines()
-	if p.peek().Type == TokRBrace {
-		if !litOK {
-			return nil, p.errAt(open, "予期しない '{' です。ブロックは式として使用できません")
-		}
-		p.next()
-		return lit, nil
-	}
-	for {
-		p.skipNewlines()
-		k, err := p.parseOr(true)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := p.expect(TokColon); err != nil {
-			return nil, p.errAt(p.peek(), "map リテラルでは キー : 値 の形式が必要です")
-		}
-		p.skipNewlines()
-		v, err := p.parseOr(true)
-		if err != nil {
-			return nil, err
-		}
-		lit.Fields = append(lit.Fields, MapLitField{Key: k, Value: v, At: k.Pos()})
-		p.skipNewlines()
-		switch p.peek().Type {
-		case TokComma:
-			p.next()
-			p.skipNewlines()
-			if p.peek().Type == TokRBrace {
-				p.next()
-				return lit, nil
-			}
-		case TokRBrace:
-			p.next()
-			return lit, nil
-		default:
-			return nil, p.errAt(p.peek(), "map リテラルでは ',' または '}' が必要です。%s が見つかりました", tokName(p.peek().Type))
-		}
 	}
 }
 

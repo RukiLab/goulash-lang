@@ -345,28 +345,6 @@ func (n *ArrayLit) String() string {
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
-type MapLitField struct {
-	Key   Expr
-	Value Expr
-	At    Pos
-}
-
-// MapLit is an anonymous {"key": value} literal (string keys only).
-type MapLit struct {
-	Fields []MapLitField
-	At     Pos
-}
-
-func (n *MapLit) Pos() Pos  { return n.At }
-func (n *MapLit) exprNode() {}
-func (n *MapLit) String() string {
-	parts := make([]string, len(n.Fields))
-	for i, f := range n.Fields {
-		parts[i] = fmt.Sprintf("%s: %s", f.Key.String(), f.Value.String())
-	}
-	return "{" + strings.Join(parts, ", ") + "}"
-}
-
 type IndexExpr struct {
 	Base  Expr
 	Index Expr
@@ -377,18 +355,6 @@ func (n *IndexExpr) Pos() Pos  { return n.At }
 func (n *IndexExpr) exprNode() {}
 func (n *IndexExpr) String() string {
 	return fmt.Sprintf("%s[%s]", n.Base.String(), n.Index.String())
-}
-
-type FieldExpr struct {
-	Base  Expr
-	Field string
-	At    Pos // position of '.'
-}
-
-func (n *FieldExpr) Pos() Pos  { return n.At }
-func (n *FieldExpr) exprNode() {}
-func (n *FieldExpr) String() string {
-	return fmt.Sprintf("%s.%s", n.Base.String(), n.Field)
 }
 
 type CallExpr struct {

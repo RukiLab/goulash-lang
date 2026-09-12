@@ -177,10 +177,10 @@ func TestIncludeErrorPosition(t *testing.T) {
 	}
 }
 
-func TestIncludeMapAcrossFiles(t *testing.T) {
+func TestIncludeArrayAcrossFiles(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "types.gsh"), "point = {\"x\": 3, \"y\": 4}\n")
-	writeFile(t, filepath.Join(dir, "main.gsh"), "#include \"types.gsh\"\nmes(point.x)\n")
+	writeFile(t, filepath.Join(dir, "types.gsh"), "point = [3, 4]\n")
+	writeFile(t, filepath.Join(dir, "main.gsh"), "#include \"types.gsh\"\nmes(point[0])\n")
 	got, err := runFile(t, filepath.Join(dir, "main.gsh"))
 	if err != nil {
 		t.Fatalf("run: %v", err)

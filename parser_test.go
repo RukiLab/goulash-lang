@@ -211,28 +211,12 @@ func TestParseMultilineArray(t *testing.T) {
 	}
 }
 
-func TestParseMapDot(t *testing.T) {
-	prog := mustParse(t, "m = {\"a\": 1}\nx = m.a\n")
-	as := prog.Stmts[1].(*AssignStmt)
-	fe, ok := as.Value.(*FieldExpr)
-	if !ok || fe.Field != "a" {
-		t.Fatalf("m.a should parse as field: %T", as.Value)
-	}
+func TestParseMapAbolished(t *testing.T) {
+	mustFailParse(t, "m = {\"a\": 1}\n", "廃止")
+	mustFailParse(t, "m = {}\n", "廃止")
+	mustFailParse(t, "x = m.a\n", "廃止")
+	mustFailParse(t, "m.a = 2\n", "廃止")
 	mustFailParse(t, "p = Person{\nname: \"A\",\n}\n", "予期しない '{'")
-}
-
-func TestParseMapLit(t *testing.T) {
-	prog := mustParse(t, "m = {\"a\": 1, \"b\": x}\n")
-	as := prog.Stmts[0].(*AssignStmt)
-	if got := as.Value.String(); got != `{"a": 1, "b": x}` {
-		t.Fatalf("got %s", got)
-	}
-	prog = mustParse(t, "m = {}\n")
-	if got := prog.Stmts[0].(*AssignStmt).Value.String(); got != "{}" {
-		t.Fatalf("got %s", got)
-	}
-	mustFailParse(t, "m = {\"a\" 1}\n", "キー : 値")
-	mustFailParse(t, "m = {\"a\": 1\n", "'}'")
 }
 
 func TestParseConditionWithBraceVar(t *testing.T) {

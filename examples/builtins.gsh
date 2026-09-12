@@ -37,8 +37,8 @@ mes("types:", vartype(1), vartype("s"), vartype(buf))
 stack = []
 push(stack, 1, 2, 3)
 mes("stack:", join(stack, "-"), "pop=" + str(pop(stack)))
-m = {"name": "Alice", "score": 98}
-mes("user:", m["name"], m["score"])
+u = ["Alice", 98]
+mes("user:", u[0], u[1])
 total = 0
 repeat [1, 2, 3] as x {
     total += x

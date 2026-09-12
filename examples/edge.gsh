@@ -4,9 +4,9 @@ mes(a[0][0][0][0][1])
 a[0][0][0][0][0] = 99
 mes(a[0][0][0][0][0])
 
-data = [[{"name": "Zed", "age": 77}]]
-mes(data[0][0].name)
-mes(data[0][0].age)
+data = [["Zed", 77]]
+mes(data[0][0])
+mes(data[0][1])
 
 total = 0
 repeat 5 {
