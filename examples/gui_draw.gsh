@@ -37,6 +37,11 @@ pos(224, 400)
 gcopy(1, 0, 0, 60, 40)
 galpha(255)
 
+color(255, 0, 0)
+pset(5, 470)
+assert(pget(5, 470) == 255 * 65536, "pget roundtrip")
+mes("pget OK")
+
 font(28)
 color(255, 255, 255)
 pos(16, 40)

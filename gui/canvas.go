@@ -218,6 +218,43 @@ func (b *WindowBackend) SetPixel(x, y int, fg [4]int) {
 	})
 }
 
+// GetPixel reads one pixel from the current target (pget).
+// Bounds are validated before touching the game thread so the error
+// is headless-safe (no RunGame needed); the readback itself blocks
+// until the game thread applies it (like PicLoad/SavePNG), so call
+// only from the script goroutine, never from Update/Draw.
+// Returned channels are raw 0-255 bytes (opaque pixels round-trip
+// exactly; translucent ones follow ebiten's readback convention).
+func (b *WindowBackend) GetPixel(x, y int) ([4]int, error) {
+	b.mu.Lock()
+	w, h := b.w, b.h
+	b.mu.Unlock()
+	if x < 0 || y < 0 || x >= w || y >= h {
+		return [4]int{}, fmt.Errorf("pget：座標 (%d, %d) は %d x %d の範囲外です", x, y, w, h)
+	}
+	sel := b.currentSel()
+	var out [4]int
+	var opErr error
+	b.runOnLoop(func() {
+		img := b.ensureTarget(sel)
+		bw, bh := img.Bounds().Dx(), img.Bounds().Dy()
+		if x >= bw || y >= bh {
+			opErr = fmt.Errorf("pget：座標 (%d, %d) はバッファ %d (%d x %d) の範囲外です", x, y, sel, bw, bh)
+			return
+		}
+		if c, ok := img.At(x, y).(color.RGBA); ok {
+			out = [4]int{int(c.R), int(c.G), int(c.B), int(c.A)}
+			return
+		}
+		r, g, bl, a := img.At(x, y).RGBA()
+		out = [4]int{int(r >> 8), int(g >> 8), int(bl >> 8), int(a >> 8)}
+	})
+	if opErr != nil {
+		return [4]int{}, opErr
+	}
+	return out, nil
+}
+
 // FillRect draws a filled rectangle on the current target.
 func (b *WindowBackend) FillRect(x, y, w, h int, fg [4]int) {
 	sel := b.currentSel()

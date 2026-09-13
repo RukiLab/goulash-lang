@@ -599,6 +599,12 @@ func TestButtonImageStatesHeadless(t *testing.T) {
 // renderGame performs all pixel probes in a single RunGame: Ebiten allows
 // only one game loop per process, and draw commands batch a frame behind,
 // so each stage draws for two frames and samples on the next one.
+// pxRes carries one GetPixel round-trip result.
+type pxRes struct {
+	c   [4]int
+	err error
+}
+
 type renderGame struct {
 	b                              *WindowBackend
 	face                           *text.GoTextFace
@@ -620,6 +626,8 @@ type renderGame struct {
 	saveErr                        error
 	gzChecked                      bool
 	pfChecked                      bool
+	pxLaunched, pxChecked          bool
+	pxDone                         chan pxRes
 	edLaunched, edMeasured         bool
 	edRow, edFrames, edDistinct    int
 	edHashes                       []uint64
@@ -770,6 +778,31 @@ func (g *renderGame) Draw(screen *ebiten.Image) {
 		if g.gzChecked && g.wFail == "" && !g.pfChecked {
 			g.pfChecked = true
 			g.checkPaint(screen)
+		}
+		// Pixel stage: pget round-trip (SetPixel like a script, read
+		// back via GetPixel on a helper goroutine — it waits for
+		// Update, so never call it on this thread). Runs after paint
+		// so earlier fills cannot clobber the probe pixel.
+		if g.pfChecked && g.wFail == "" && !g.pxChecked {
+			if !g.pxLaunched {
+				g.pxLaunched = true
+				g.b.SetPixel(500, 200, [4]int{255, 0, 0, 255})
+				g.pxDone = make(chan pxRes, 1)
+				go func() {
+					c, err := g.b.GetPixel(500, 200)
+					g.pxDone <- pxRes{c, err}
+				}()
+			}
+			select {
+			case r := <-g.pxDone:
+				g.pxChecked = true
+				if r.err != nil {
+					g.wFail = "pget: " + r.err.Error()
+				} else if r.c != [4]int{255, 0, 0, 255} {
+					g.wFail = fmt.Sprintf("pget roundtrip = %v, want opaque red", r.c)
+				}
+			default:
+			}
 		}
 		// Editor stage: hold an active ReadLine prompt and hash its row
 		// every frame. A steady prompt yields exactly one distinct hash.
@@ -1396,6 +1429,21 @@ func TestFloodFillBounds(t *testing.T) {
 	}
 }
 
+// TestGetPixelBounds covers pget coordinate validation without a game
+// loop (bounds are checked before any game-thread readback).
+func TestGetPixelBounds(t *testing.T) {
+	b := mustNew(t)
+	for _, p := range [][2]int{{-1, 0}, {0, -1}, {640, 0}, {0, 480}, {1000000, 1000000}} {
+		if _, err := b.GetPixel(p[0], p[1]); err == nil {
+			t.Fatalf("GetPixel%v should error", p)
+		}
+	}
+}
+
+// NOTE: GetPixel round-trip needs a running game loop (ebiten forbids
+// readback before it starts), so it is covered by the pget stage in
+// TestGuiRender below instead of a headless test.
+
 // TestSetFontSize covers font() state without a game loop
 // (face reload is pure Go; no images involved).
 func TestSetFontSize(t *testing.T) {
@@ -1891,6 +1939,9 @@ func TestGuiRender(t *testing.T) {
 	}
 	if !g.probedInput {
 		t.Fatal("input stage never ran")
+	}
+	if !g.pxChecked {
+		t.Fatal("pget stage never ran")
 	}
 	t.Logf("arrows=%d mouse=(%d,%d) clicked=%v", g.keyIdle, g.mouseX, g.mouseY, g.clickedVal)
 	if g.keyIdle != 0 {

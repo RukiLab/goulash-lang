@@ -58,6 +58,28 @@ func init() {
 		return Null(), nil
 	})
 
+	// pget(x, y): read one pixel from the current target.
+	// Returns the color as a 0xRRGGBB integer (r*65536+g*256+b).
+	register("pget", 2, 2, func(in *Interp, args []Value, at Pos) (Value, error) {
+		wb, err := guiBE(in, at, "pget")
+		if err != nil {
+			return Null(), err
+		}
+		x, err := needInt("pget", args, 0, at)
+		if err != nil {
+			return Null(), err
+		}
+		y, err := needInt("pget", args, 1, at)
+		if err != nil {
+			return Null(), err
+		}
+		c, err := wb.GetPixel(int(x), int(y))
+		if err != nil {
+			return Null(), rtErrf(at, "%s", err.Error())
+		}
+		return Int(int64(c[0])*65536 + int64(c[1])*256 + int64(c[2])), nil
+	})
+
 	// pset(x, y): one pixel in the current color.
 	register("pset", 2, 2, func(in *Interp, args []Value, at Pos) (Value, error) {
 		wb, err := guiBE(in, at, "pset")

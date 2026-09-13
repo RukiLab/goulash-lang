@@ -314,3 +314,31 @@ func TestGuiDrawValidation(t *testing.T) {
 		t.Fatal("pngsave numeric path should error")
 	}
 }
+
+func TestGuiPgetValidation(t *testing.T) {
+	// CUI backend has no canvas to read from.
+	mustErrIO(t, "pget(10, 10)\n", "pget は GUI ビルドが必要です")
+	// Headless window backend (320x200): validation runs before any
+	// game-thread readback.
+	if _, err := guiEval(t, "pget(-1, 0)"); err == nil {
+		t.Fatal("pget negative x should error")
+	}
+	if _, err := guiEval(t, "pget(0, -1)"); err == nil {
+		t.Fatal("pget negative y should error")
+	}
+	if _, err := guiEval(t, "pget(320, 0)"); err == nil {
+		t.Fatal("pget x == width should error")
+	}
+	if _, err := guiEval(t, "pget(0, 200)"); err == nil {
+		t.Fatal("pget y == height should error")
+	}
+	if _, err := guiEval(t, "pget(\"x\", 0)"); err == nil {
+		t.Fatal("pget string x should error")
+	}
+	if _, err := guiEval(t, "pget(0, 1.5)"); err == nil {
+		t.Fatal("pget float y should error")
+	}
+	if _, err := guiEval(t, "pget(1)"); err == nil {
+		t.Fatal("pget arity should error")
+	}
+}

@@ -36,6 +36,7 @@ Goulash 処理系の変更履歴です。v0.2 は未リリースのため、す�
 - `mes()` / `print()` の末尾装飾指定：`bold` / `italic` / `bolditalic` / `underline`（完全一致のみ消費。GUIはフォント変形描画、CUIはANSI）
 - ファイル組込の相対パス解決：スクリプト脇→カレントの順（`#include` と同じ規則。新規保存はスクリプト脇。`exec` / `pipeexec` のコマンド名は対象外）
 - レジスタ型VMバックエンド（`GOULASH_BACKEND=vm` で選択。既定はツリーウォークのまま）。出力・エラー文言・位置・終了コードは両系で同一（`parity_test.go` で検証）。数値ループの1周あたり割当てゼロ、`fib(24)` で約5倍・100万回 `while` 加算で約4倍の高速化を実証
+- `pget(x, y)`（GUI）：現在バッファの指定座標の色を `0xRRGGBB` 整数で返す。範囲外はエラー（CUI ではGUIビルド要求エラー）
 - `gsh disasm <file.gsh>`：バイトコード逆アセンブル（定数・名前・レジスタ数・位置付き）。`GOULASH_TRACE=1` で命令トレース
 - 設計書 `docs/DESIGN_VM.md`：`interp.go` セマンティクス確認結果・命令セット・lowering・検証結果
 - VM を既定バックエンドに変更（`GOULASH_BACKEND=tree` でツリーウォークに戻せる。観測可能動作は同一）

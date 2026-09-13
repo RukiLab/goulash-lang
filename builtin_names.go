@@ -4,7 +4,7 @@ package main
 // Referenced by TestBuiltinRegistryComplete.
 var guiBuiltinNames = []string{
 	"screen", "gsel",
-	"pset", "line", "boxf", "circle",
+	"pset", "pget", "line", "boxf", "circle",
 	"gcopy", "gmode", "picload",
 	"pngsave", "galpha", "paint", "font",
 	"getkey", "mousex", "mousey", "clicked", "mousewheel", "fullscreen", "closing", "screensize", "cursor",
