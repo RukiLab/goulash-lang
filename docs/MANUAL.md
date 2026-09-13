@@ -1392,7 +1392,7 @@ end()
 | `pngsave(path [,id])` | 描画バッファをPNG保存します   | 指定バッファをPNGへ保存します     | GUI描画バッファがないためGUI用途の機能です |
 | `galpha(a)`           | 描画不透明度を設定します      | `0`～`255` の透明度を設定します | GUI描画は行われません             |
 | `paint(x,y)`          | flood-fillします     | 指定位置から塗りつぶします        | GUI描画は行われません             |
-| `font(size)` / `font(spec)` / `font(spec, size)` | フォントサイズ・書体を設定します | `8`～`64` ピクセルへ変更します。`spec` はフォントファイルのパスまたはシステムフォント名（例 `YuGothR.ttc`）です | GUI描画がないためGUI用途の設定です |
+| `font(size)` / `font(spec)` / `font(spec, size)` | フォントサイズ・書体を設定します | `8`～`64` ピクセルへ変更します。`spec` はフォントファイルのパスまたはシステムフォント名（例 `YuGothR.ttc`、`PlemolJP-Regular.ttf`）です | GUI描画がないためGUI用途の設定です |
 
 `galpha()` の透明度は図形・転送に適用されます。
 
@@ -1908,6 +1908,8 @@ ebitenui
 Windows では游ゴシック・メイリオ・Noto Sans JP など、macOS ではヒラギノ角ゴシックなど、Linux では Noto Sans CJK などを自動検出します。
 
 環境変数 `GOULASH_FONT` に `.ttf` / `.otf` / `.ttc` ファイルのパスを指定すると、そのフォントを優先します。
+
+`font(spec)` の名前解決順は、スクリプト脇→カレントディレクトリ→システムフォントです。Windows では `C:\Windows\Fonts` に加え、管理者権限なしインストール先の `%LOCALAPPDATA%\Microsoft\Windows\Fonts` も検索します。
 
 システムフォントが見つからない環境では、GUI バックエンドの生成時にエラーになります。
 

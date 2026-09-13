@@ -131,6 +131,9 @@ func loadFace(size float64) (*text.GoTextFace, error) {
 }
 
 // fontDirs lists directories searched for bare font file names.
+// On Windows, per-user installs (%LOCALAPPDATA%\Microsoft\Windows\Fonts,
+// the default for non-admin installs) are searched after the system
+// directory; other OSes already list their per-user directories below.
 func fontDirs() []string {
 	switch runtime.GOOS {
 	case "windows":
@@ -138,7 +141,11 @@ func fontDirs() []string {
 		if root == "" {
 			root = `C:\Windows`
 		}
-		return []string{filepath.Join(root, "Fonts")}
+		dirs := []string{filepath.Join(root, "Fonts")}
+		if local := os.Getenv("LOCALAPPDATA"); local != "" {
+			dirs = append(dirs, filepath.Join(local, "Microsoft", "Windows", "Fonts"))
+		}
+		return dirs
 	case "darwin":
 		return []string{
 			"/System/Library/Fonts",
@@ -192,7 +199,7 @@ func resolveFontSpec(spec string) (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("font: フォント %q がシステムフォント内に見つかりません", spec)
+	return "", fmt.Errorf("font: フォント %q が見つかりません（スクリプト脇・カレント・システムフォントを確認しました）", spec)
 }
 
 // isFontPath reports whether spec looks like a file path rather than a

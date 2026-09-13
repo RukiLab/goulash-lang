@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -345,6 +346,31 @@ func TestSetFontFileHeadless(t *testing.T) {
 	}
 	if err := b.SetFontFile(name, 7); err == nil {
 		t.Fatal("size 7 should error")
+	}
+}
+
+// TestFontPerUserDir covers bare-name resolution in the per-user font
+// directory (Windows default for non-admin installs). The scan only
+// needs the file name, so a dummy file suffices (no parsing involved).
+func TestFontPerUserDir(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("per-user Fonts dir is a Windows concept")
+	}
+	dir := filepath.Join(t.TempDir(), "Microsoft", "Windows", "Fonts")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	const name = "TestDummyPlemolJP-Regular.ttf"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("dummy"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LOCALAPPDATA", filepath.Dir(filepath.Dir(filepath.Dir(dir))))
+	got, err := resolveFontSpec(name)
+	if err != nil {
+		t.Fatalf("resolveFontSpec(%q): %v", name, err)
+	}
+	if !strings.EqualFold(got, filepath.Join(dir, name)) {
+		t.Fatalf("resolved = %q, want under per-user Fonts", got)
 	}
 }
 
