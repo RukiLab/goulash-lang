@@ -12,7 +12,7 @@
 
 // 配列添字
 // → P_TYPE, P_ROT, P_COL, P_ROW, P_BLOCKS
-#define P_TYPE 0
+#define P_TYPE
 #define P_ROT
 #define P_COL
 #define P_ROW
