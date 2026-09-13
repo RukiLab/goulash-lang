@@ -5,9 +5,11 @@
 レジスタ型VM」へ移行した記録である。
 
 実装：`opcode.go`（命令）・`program.go`（Proto/Program）・`compile.go`
-（コンパイラ）・`vm.go`（実行ループ）・`disasm.go`（逆アセンブラ）。
-切替：`GOULASH_BACKEND=vm`（既定は `tree`）。検証：`parity_test.go`、
-`vm_bench_test.go`、`compile_test.go`、`vm_test.go`。
+（コンパイラ）・`vm.go`（実行ループ）・`disasm.go`（逆アセンブラ）・
+`program_codec.go`（直列化・exe連結）。
+VM が既定（`GOULASH_BACKEND=tree` でツリーウォークに戻せる）。
+検証：`parity_test.go`、`vm_bench_test.go`、`compile_test.go`、
+`vm_test.go`、`program_codec_test.go`。
 
 ---
 
@@ -186,7 +188,19 @@ BRKTOP CONTTOP RETTOP HALT`
 
 ---
 
-## 6. 既知の制限（内部限界）
+## 6. 単一exe化（`gsh build`）
+
+- `MarshalVMProgram` で Proto 群＋`#mode` をバイト列化し（版・CRC付き）、
+  ランタイム exe の末尾に連結する（`AppendBundle`）。
+  識別子＋長さの 16B trailer で検出する（`ExtractBundle`）。
+- 起動時は自 exe 末尾だけ見てバンドル判定し、有れば CLI の代わりに
+  内蔵プログラムを実行する（`--gui`/`--cui`/`--` 以外はスクリプト引数、
+  相対パスの基準は exe のあるディレクトリ）。
+- 連結済みを入力にしても `stripBundle` で入替えになり多重化しない。
+- バンドル実行は常に VM（組込表は遅延初期化のため `callBuiltinByID` 側でも
+  ensure する）。エラー位置はビルド時のソース位置を保持する。
+
+## 7. 既知の制限（内部限界）
 
 - 1プロトタイプあたりレジスタ255（8bit operand）。超過時は内部エラー
   （現実の作例では `falling.gsh` も13に収まる）。

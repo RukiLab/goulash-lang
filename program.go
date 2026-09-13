@@ -69,6 +69,10 @@ func lookupBuiltinID(name string) int {
 // callBuiltinByID は arity 検査＋呼出を行う。文言は callBuiltin と同一にする
 // ため、検査部分は callBuiltin と同じ式で組み立てる（将来の変更時は両方更新）。
 func callBuiltinByID(id int, in *Interp, args []Value, at Pos) (Value, error) {
+	ensureBuiltinTable()
+	if id < 0 || id >= len(builtinTable) {
+		return Null(), rtErrf(at, "内部エラー：不正な組込IDです")
+	}
 	b := builtinTable[id]
 	if len(args) < b.minArgs || (b.maxArgs >= 0 && len(args) > b.maxArgs) {
 		if b.minArgs == b.maxArgs {

@@ -38,6 +38,8 @@ Goulash 処理系の変更履歴です。v0.2 は未リリースのため、す�
 - レジスタ型VMバックエンド（`GOULASH_BACKEND=vm` で選択。既定はツリーウォークのまま）。出力・エラー文言・位置・終了コードは両系で同一（`parity_test.go` で検証）。数値ループの1周あたり割当てゼロ、`fib(24)` で約5倍・100万回 `while` 加算で約4倍の高速化を実証
 - `gsh disasm <file.gsh>`：バイトコード逆アセンブル（定数・名前・レジスタ数・位置付き）。`GOULASH_TRACE=1` で命令トレース
 - 設計書 `docs/DESIGN_VM.md`：`interp.go` セマンティクス確認結果・命令セット・lowering・検証結果
+- VM を既定バックエンドに変更（`GOULASH_BACKEND=tree` でツリーウォークに戻せる。観測可能動作は同一）
+- `gsh build <file.gsh> [-o out.exe]`：バイトコード連結の単一exe生成（`#mode` 記録・`--gui`/`--cui` 上書き可・スクリプト引数透過・入替えビルド対応）
 
 ### 変更（破壊的）
 - コマンド名：`hsp-next` → `gou` → `gsh`。モジュールも `gsh`（`gsh/gui`）に統一。言語名 `Goulash` は維持
