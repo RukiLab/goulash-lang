@@ -1,0 +1,202 @@
+// VM のベンチマークと性能回帰テスト。
+//
+// 目標：
+//   - 数値ホットループはループ1周あたり 0 allocs（実行回数 N を変えても
+//     1 実行の割当てが増えないことで検証）。
+//   - 再帰・ループともにツリーウォーク比 3 倍以上の高速化。
+package main
+
+import (
+	"bytes"
+	"strings"
+	"testing"
+	"time"
+)
+
+func mustParseB(b *testing.B, src string) *Program {
+	b.Helper()
+	prog, err := Parse(src)
+	if err != nil {
+		b.Fatalf("parse: %v", err)
+	}
+	return prog
+}
+
+const benchLoopSrc = "i = 0\nwhile i < 1000000 {\ni = i + 1\n}\n"
+
+const benchFibSrc = "def fib(n) {\nif n < 2 {\nreturn n\n}\nreturn fib(n - 1) + fib(n - 2)\n}\nmes(fib(24))\n"
+
+// vmAllocsPerRun は VM 1 実行あたりの平均割当て数を返す（機械は毎回新規）。
+func vmAllocsPerRun(b *testing.B, src string, runs int) float64 {
+	b.Helper()
+	prog := mustParseB(b, src)
+	vprog, err := Compile(prog)
+	if err != nil {
+		b.Fatalf("compile: %v", err)
+	}
+	return testing.AllocsPerRun(runs, func() {
+		var buf bytes.Buffer
+		in := NewInterpWithIO(&buf, strings.NewReader(""))
+		if err := newVmachine(in).runMain(vprog); err != nil {
+			b.Fatalf("vm run: %v", err)
+		}
+	})
+}
+
+// TestVMZeroAllocLoop はループ1周あたり 0 allocs を検証する。
+// 反復回数を 10 倍にしても 1 実行の割当てが増えなければ、
+// 増分（＝ループ本体）は割当てゼロである。
+func TestVMZeroAllocLoop(t *testing.T) {
+	small := "i = 0\nwhile i < 100000 {\ni = i + 1\n}\n"
+	large := "i = 0\nwhile i < 1000000 {\ni = i + 1\n}\n"
+	aSmall := vmAllocsPerRunT(t, small)
+	aLarge := vmAllocsPerRunT(t, large)
+	t.Logf("allocs/run small=%v large=%v", aSmall, aLarge)
+	if aLarge > aSmall+1 {
+		t.Fatalf("loop allocates per iteration: small=%v large=%v", aSmall, aLarge)
+	}
+}
+
+func vmAllocsPerRunT(t *testing.T, src string) float64 {
+	t.Helper()
+	prog, err := Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	vprog, err := Compile(prog)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	return testing.AllocsPerRun(10, func() {
+		var buf bytes.Buffer
+		in := NewInterpWithIO(&buf, strings.NewReader(""))
+		if err := newVmachine(in).runMain(vprog); err != nil {
+			t.Fatalf("vm run: %v", err)
+		}
+	})
+}
+
+// TestVMSpeedup はツリーウォーク比の高速化を検証する。
+// 外れ値の影響を抑えるため各3回測定の中央値で比較する。
+func TestVMSpeedup(t *testing.T) {
+	if testing.Short() {
+		t.Skip("short mode")
+	}
+	treeDur := medDur(t, timeTree, benchFibSrc)
+	vmDur := medDur(t, timeVM, benchFibSrc)
+	t.Logf("fib(24): tree=%v vm=%v ratio=%.2fx", treeDur, vmDur, float64(treeDur)/float64(vmDur))
+	if vmDur*3 > treeDur {
+		t.Fatalf("insufficient speedup: vm=%v tree=%v (need 3x)", vmDur, treeDur)
+	}
+	loopTree := medDur(t, timeTree, benchLoopSrc)
+	loopVM := medDur(t, timeVM, benchLoopSrc)
+	t.Logf("loop(1e6): tree=%v vm=%v ratio=%.2fx", loopTree, loopVM, float64(loopTree)/float64(loopVM))
+	if loopVM*3 > loopTree {
+		t.Fatalf("insufficient loop speedup: vm=%v tree=%v (need 3x)", loopVM, loopTree)
+	}
+}
+
+func medDur(t *testing.T, fn func(*testing.T, string) time.Duration, src string) time.Duration {
+	t.Helper()
+	ds := []time.Duration{fn(t, src), fn(t, src), fn(t, src)}
+	if ds[0] > ds[1] {
+		ds[0], ds[1] = ds[1], ds[0]
+	}
+	if ds[1] > ds[2] {
+		ds[1], ds[2] = ds[2], ds[1]
+	}
+	if ds[0] > ds[1] {
+		ds[0], ds[1] = ds[1], ds[0]
+	}
+	return ds[1]
+}
+
+func timeTree(t *testing.T, src string) time.Duration {
+	t.Helper()
+	prog, err := Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	var buf bytes.Buffer
+	in := NewInterpWithIO(&buf, strings.NewReader(""))
+	start := time.Now()
+	if err := in.Run(prog); err != nil {
+		t.Fatalf("tree run: %v", err)
+	}
+	return time.Since(start)
+}
+
+func timeVM(t *testing.T, src string) time.Duration {
+	t.Helper()
+	prog, err := Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	vprog, err := Compile(prog)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var buf bytes.Buffer
+	in := NewInterpWithIO(&buf, strings.NewReader(""))
+	start := time.Now()
+	if err := newVmachine(in).runMain(vprog); err != nil {
+		t.Fatalf("vm run: %v", err)
+	}
+	return time.Since(start)
+}
+
+func BenchmarkTreeNumLoop(b *testing.B) {
+	prog := mustParseB(b, benchLoopSrc)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var buf bytes.Buffer
+		in := NewInterpWithIO(&buf, strings.NewReader(""))
+		if err := in.Run(prog); err != nil {
+			b.Fatalf("tree run: %v", err)
+		}
+	}
+}
+
+func BenchmarkVMNumLoop(b *testing.B) {
+	prog := mustParseB(b, benchLoopSrc)
+	vprog, err := Compile(prog)
+	if err != nil {
+		b.Fatalf("compile: %v", err)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var buf bytes.Buffer
+		in := NewInterpWithIO(&buf, strings.NewReader(""))
+		if err := newVmachine(in).runMain(vprog); err != nil {
+			b.Fatalf("vm run: %v", err)
+		}
+	}
+}
+
+func BenchmarkTreeFib(b *testing.B) {
+	prog := mustParseB(b, benchFibSrc)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var buf bytes.Buffer
+		in := NewInterpWithIO(&buf, strings.NewReader(""))
+		if err := in.Run(prog); err != nil {
+			b.Fatalf("tree run: %v", err)
+		}
+	}
+}
+
+func BenchmarkVMFib(b *testing.B) {
+	prog := mustParseB(b, benchFibSrc)
+	vprog, err := Compile(prog)
+	if err != nil {
+		b.Fatalf("compile: %v", err)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		var buf bytes.Buffer
+		in := NewInterpWithIO(&buf, strings.NewReader(""))
+		if err := newVmachine(in).runMain(vprog); err != nil {
+			b.Fatalf("vm run: %v", err)
+		}
+	}
+}

@@ -35,6 +35,9 @@ Goulash 処理系の変更履歴です。v0.2 は未リリースのため、す�
 - `parsetree(src)`：ソースの構文木取得（IDE向け。文・式ノード＋素enum一覧。`lextokens` の対）
 - `mes()` / `print()` の末尾装飾指定：`bold` / `italic` / `bolditalic` / `underline`（完全一致のみ消費。GUIはフォント変形描画、CUIはANSI）
 - ファイル組込の相対パス解決：スクリプト脇→カレントの順（`#include` と同じ規則。新規保存はスクリプト脇。`exec` / `pipeexec` のコマンド名は対象外）
+- レジスタ型VMバックエンド（`GOULASH_BACKEND=vm` で選択。既定はツリーウォークのまま）。出力・エラー文言・位置・終了コードは両系で同一（`parity_test.go` で検証）。数値ループの1周あたり割当てゼロ、`fib(24)` で約5倍・100万回 `while` 加算で約4倍の高速化を実証
+- `gsh disasm <file.gsh>`：バイトコード逆アセンブル（定数・名前・レジスタ数・位置付き）。`GOULASH_TRACE=1` で命令トレース
+- 設計書 `docs/DESIGN_VM.md`：`interp.go` セマンティクス確認結果・命令セット・lowering・検証結果
 
 ### 変更（破壊的）
 - コマンド名：`hsp-next` → `gou` → `gsh`。モジュールも `gsh`（`gsh/gui`）に統一。言語名 `Goulash` は維持

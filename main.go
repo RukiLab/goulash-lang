@@ -9,7 +9,10 @@
 //
 // --keep is accepted by `run` for forward compatibility (a future
 // transpiler backend may emit intermediate files) but is currently a no-op:
-// the tree-walk interpreter generates no intermediate files.
+// neither the tree-walk interpreter nor the VM generates intermediate files.
+//
+// GOULASH_BACKEND=vm selects the register-VM backend (default: tree).
+// The VM preserves all observable behavior of the tree-walk interpreter.
 package main
 
 import (
@@ -26,6 +29,31 @@ import (
 // usage と REPL バナーはここから組み立てられます。
 const goulashVersion = "0.2"
 
+// useVM reports whether the register-VM backend is selected.
+func useVM() bool {
+	return os.Getenv("GOULASH_BACKEND") == "vm"
+}
+
+// runProgram executes prog on the selected backend.
+func runProgram(in *Interp, prog *Program) error {
+	if useVM() {
+		vprog, err := Compile(prog)
+		if err != nil {
+			return err
+		}
+		return newVmachine(in).runMain(vprog)
+	}
+	return in.Run(prog)
+}
+
+// evalGlobalExpr evaluates a bare expression for REPL echo on either backend.
+func evalGlobalExpr(in *Interp, vm *vmachine, x Expr) (Value, error) {
+	if vm != nil {
+		return vm.evalOne(x, x.Pos())
+	}
+	return in.EvalGlobal(x)
+}
+
 var usage = `gsh: Goulash v` + goulashVersion + ` インタプリタ
 
 使い方:
@@ -33,6 +61,10 @@ var usage = `gsh: Goulash v` + goulashVersion + ` インタプリタ
   gsh repl                               対話環境（REPL）を起動します
   gsh lex <file.gsh>                    字句トークン列を出力します（デバッグ用）
   gsh parse <file.gsh>                  構文木（AST）を出力します（デバッグ用）
+  gsh disasm <file.gsh>                 バイトコードを逆アセンブルします（VM用）
+
+環境変数 GOULASH_BACKEND=vm でレジスタVMバックエンドを使用します（既定は
+ツリーウォーク）。GOULASH_TRACE=1 でVM命令トレースを標準エラー出力します。
 
 実行モードはコード内の #mode cli/gui で指定します（省略時は gui で
 ウィンドウを開きます。--gui/--cui はコマンドラインからの強制指定で、
@@ -53,6 +85,8 @@ func main() {
 		cmdLex(os.Args[2:])
 	case "parse":
 		cmdParse(os.Args[2:])
+	case "disasm":
+		cmdDisasm(os.Args[2:])
 	case "help", "--help", "-h":
 		fmt.Println(usage)
 	default:
@@ -126,7 +160,7 @@ func cmdRun(args []string) {
 	in := NewInterp(os.Stdout)
 	in.SetArgs(scriptArgs)
 	in.SetScriptDir(scriptDirOf(file))
-	if err := in.Run(prog); err != nil {
+	if err := runProgram(in, prog); err != nil {
 		fmt.Fprintln(os.Stderr, "エラー:", err)
 		os.Exit(1)
 	}
@@ -194,7 +228,7 @@ func runGUI(file string, prog *Program, scriptArgs []string) {
 						err = errors.New(enginePanicMsg(r))
 					}
 				}()
-				return in.Run(prog)
+				return runProgram(in, prog)
 			}()
 			if runErr != nil {
 				// Report to the terminal and terminate the process:
@@ -220,6 +254,24 @@ func runGUI(file string, prog *Program, scriptArgs []string) {
 		os.Exit(code)
 	}
 	os.Exit(loopCode)
+}
+
+func cmdDisasm(args []string) {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "disasm はファイルを 1 つだけ指定してください")
+		os.Exit(2)
+	}
+	prog, err := ParseFile(args[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "エラー:", err)
+		os.Exit(1)
+	}
+	vprog, err := Compile(prog)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "エラー:", err)
+		os.Exit(1)
+	}
+	fmt.Print(Disassemble(vprog))
 }
 
 func cmdLex(args []string) {
@@ -250,9 +302,26 @@ func cmdParse(args []string) {
 	fmt.Print(prog.String())
 }
 
+// runReplProg executes one REPL input on the selected backend.
+// The VM machine persists across inputs (globals/functions accumulate).
+func runReplProg(in *Interp, vm *vmachine, prog *Program) error {
+	if vm != nil {
+		vprog, err := Compile(prog)
+		if err != nil {
+			return err
+		}
+		return vm.runMain(vprog)
+	}
+	return in.Run(prog)
+}
+
 func cmdRepl() {
 	fmt.Println("Goulash v" + goulashVersion + " REPL (type \"exit\" to quit)")
 	in := NewInterp(os.Stdout)
+	var replVM *vmachine
+	if useVM() {
+		replVM = newVmachine(in)
+	}
 	// NOTE: the REPL reads through the interpreter Backend so input()
 	// shares the same stdin reader instead of competing with it.
 	var buf strings.Builder
@@ -301,7 +370,7 @@ func cmdRepl() {
 		// Bare expressions echo their value; everything else just runs.
 		if len(prog.Stmts) == 1 {
 			if es, ok := prog.Stmts[0].(*ExprStmt); ok {
-				v, err := in.EvalGlobal(es.X)
+				v, err := evalGlobalExpr(in, replVM, es.X)
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "エラー:", err)
 				} else if v.K != KNull {
@@ -312,7 +381,7 @@ func cmdRepl() {
 				continue
 			}
 		}
-		if err := in.Run(prog); err != nil {
+		if err := runReplProg(in, replVM, prog); err != nil {
 			fmt.Fprintln(os.Stderr, "エラー:", err)
 		}
 		if code, ok := in.ExitCode(); ok {
