@@ -77,6 +77,8 @@ type fcomp struct {
 	patches  []jumpPatch
 	labels   map[int]int
 	labelSeq int
+	// 融合複合代入の低速スタブ（finish 時に末尾へ flush）。
+	stubs []incStub
 }
 
 type blockCtx struct {
@@ -89,6 +91,7 @@ type blockCtx struct {
 type jumpPatch struct {
 	at    int
 	label int
+	hi    bool // 真のとき Code[at+1] の上位32bit へ書く（REPINC の低速 sBx 用）
 }
 
 func (f *fcomp) newLabel() int {
@@ -122,6 +125,12 @@ func (f *fcomp) patchAll() error {
 			return fmt.Errorf("内部エラー：未解決ラベル %d", p.label)
 		}
 		off := target - p.at - 1
+		if p.hi {
+			// REPINC の word1 上位へ（下位の名前 index は保持）。
+			lo := uint32(f.code[p.at+1])
+			f.code[p.at+1] = Instr(uint64(EncodeSBx(off))<<32 | uint64(lo))
+			continue
+		}
 		op, a, b, c, _ := f.code[p.at].Decode()
 		f.code[p.at] = EncodeInstr(op, a, b, c, EncodeSBx(off))
 	}
@@ -192,9 +201,37 @@ func (f *fcomp) mark() int { return f.tempTop }
 
 func (f *fcomp) reset(m int) { f.tempTop = m }
 
+// nonVoidLit は void になり得ない RHS（CKVAL 省略可）を判定する。
+// NullLit・呼出・変数・添字・単項・二項は void またはエラーの可能性があり対象外。
+func nonVoidLit(x Expr) bool {
+	switch x.(type) {
+	case *IntLit, *FloatLit, *StringLit, *BoolLit, *ArrayLit:
+		return true
+	}
+	return false
+}
+
+// constLiteral は定数リテラルの値を返す（融合の定数形用）。
+func constLiteral(x Expr) (Value, bool) {
+	switch n := x.(type) {
+	case *IntLit:
+		return Int(n.Value), true
+	case *FloatLit:
+		return Float(n.Value), true
+	case *StringLit:
+		return Str(n.Value), true
+	case *BoolLit:
+		return Bool(n.Value), true
+	}
+	return Null(), false
+}
+
 // --- 仕上げ ---
 
 func (f *fcomp) finish(name string, params []string) (*VMProto, error) {
+	if err := f.flushStubs(); err != nil {
+		return nil, err
+	}
 	if err := f.patchAll(); err != nil {
 		return nil, err
 	}
@@ -247,16 +284,13 @@ func (f *fcomp) stmt(s Stmt) error {
 			return err
 		}
 		// requireValue(v, target.Pos())：RHS の後・ターゲット解決の前。
-		f.emit(OpCkVal, rv, 0, 0, 0, n.Target.Pos())
+		// リテラル（NullLit 除く）は void になり得ないため省略する。
+		if !nonVoidLit(n.Value) {
+			f.emit(OpCkVal, rv, 0, 0, 0, n.Target.Pos())
+		}
 		return f.assign(n.Target, rv)
 	case *CompoundAssignStmt:
-		rv, err := f.expr(n.Value)
-		if err != nil {
-			return err
-		}
-		// requireValue(v, n.Value.Pos())。
-		f.emit(OpCkVal, rv, 0, 0, 0, n.Value.Pos())
-		return f.assignCompound(n.Target, n.Op, rv, n.At)
+		return f.compoundStmt(n)
 	case *DefStmt:
 		return f.def(n)
 	case *IfStmt:
@@ -518,32 +552,45 @@ func (f *fcomp) repeat(n *RepeatStmt) error {
 		// 整数形の as i,x は無条件エラー（n.At 位置）。
 		f.emit(OpRepIntErr, 0, 0, 0, 0, n.At)
 	}
-	f.emit(OpForIPrep, cv, 0, 0, 0, n.Count.Pos())
+	// ボトムテスト形：FORIPREP（0周は end へ）→ top: 本体 → FORILOOP（継続は top へ）。
+	// これにより周回あたりの JMP が1つ減る。
+	endLabel := f.nextLabel()
+	topLabel := f.nextLabel()
+	bottomLabel := f.nextLabel()
+	var kv uint8 = NoReg
+	if n.HasVar {
+		var err error
+		kv, err = f.alloc()
+		if err != nil {
+			return err
+		}
+	}
+	f.emitForIPrep(cv, kv, endLabel, n.Count.Pos())
 	if n.HasVar {
 		if err := f.saveVar(n.Var, SaveReadonly|SaveInitZero, n.At); err != nil {
 			return err
 		}
 	}
-	endLabel := f.nextLabel()
-	topLabel := f.nextLabel()
-	f.ctxt = append(f.ctxt, blockCtx{isLoop: true, isRepeat: true, end: afterAll, cont: topLabel})
+	f.ctxt = append(f.ctxt, blockCtx{isLoop: true, isRepeat: true, end: afterAll, cont: bottomLabel})
 	f.bindLabel(topLabel)
-	kv, err := f.alloc()
-	if err != nil {
-		return err
-	}
-	f.emitJump(OpForILoop, kv, endLabel, n.At)
 	if n.HasVar {
 		if err := f.putVar(n.Var, kv, n.At); err != nil {
+			f.ctxt = f.ctxt[:len(f.ctxt)-1]
 			return err
 		}
 	}
+	recCode := len(f.code)
+	recPatches := len(f.patches)
+	recStubs := len(f.stubs)
 	if err := f.block(n.Body.Stmts); err != nil {
 		f.ctxt = f.ctxt[:len(f.ctxt)-1]
 		return err
 	}
 	f.ctxt = f.ctxt[:len(f.ctxt)-1]
-	f.emitJump(OpJmp, 0, topLabel, n.At)
+	if !f.tryRepInc(n, recCode, recPatches, recStubs, topLabel, bottomLabel) {
+		f.bindLabel(bottomLabel)
+		f.emitJump(OpForILoop, kv, topLabel, n.At)
+	}
 	f.bindLabel(endLabel)
 	f.emit(OpPopLoop, 0, 0, 0, 0, n.At)
 	f.emitJump(OpJmp, 0, afterAll, n.At)
@@ -604,9 +651,53 @@ func (f *fcomp) repeat(n *RepeatStmt) error {
 	return nil
 }
 
+// tryRepInc は本体が単一のグローバル定数 INCCHK である場合に
+// REPINC 融合を試みる。成功時は本体を置換し、FORILOOP の代わりに
+// REPINC を発行する（低速スタブは継続＝top へ戻すよう書換える）。
+// 条件外では何もせず偽を返す（通常経路）。
+func (f *fcomp) tryRepInc(n *RepeatStmt, recCode, recPatches, recStubs, topLabel, bottomLabel int) bool {
+	if n.HasVar {
+		return false
+	}
+	if len(f.code)-recCode != 2 || len(f.patches)-recPatches != 1 || len(f.stubs)-recStubs != 1 {
+		return false
+	}
+	op, a, b, c, _ := f.code[recCode].Decode()
+	if op != OpIncChk || b != NoReg || c&IncRhsReg != 0 {
+		return false
+	}
+	if int(a) >= len(f.g.consts) || f.g.consts[a].K != KInt {
+		return false
+	}
+	pos0 := f.pos[recCode]
+	word1 := f.code[recCode+1]
+	pos1 := f.pos[recCode+1]
+	stub := &f.stubs[recStubs]
+	// 低速スタブは反復継続（top）へ戻す。
+	stub.end = topLabel
+	// 本体・パッチを巻き戻す。
+	f.code = f.code[:recCode]
+	f.pos = f.pos[:recCode]
+	f.patches = f.patches[:recPatches]
+	// bottomLabel を top の別名にする（continue 対応）。
+	f.bindLabel(bottomLabel)
+	// REPINC を発行する（D=top、word1上位=slow）。
+	f.patches = append(f.patches, jumpPatch{at: len(f.code), label: topLabel})
+	f.emit(OpRepInc, a, 0, c, 0, pos0)
+	f.emitWord(word1, pos1)
+	f.patches = append(f.patches, jumpPatch{at: len(f.code) - 2, label: stub.slow, hi: true})
+	return true
+}
+
 func (f *fcomp) emitForALoop(iv, ev uint8, label int, at Pos) {
 	f.patches = append(f.patches, jumpPatch{at: len(f.code), label: label})
 	f.emit(OpForALoop, iv, ev, 0, 0, at)
+}
+
+// emitForIPrep は FORIPREP A(count), B(idxDest|NoReg), sBx(end) を発行する。
+func (f *fcomp) emitForIPrep(cv, kv uint8, label int, at Pos) {
+	f.patches = append(f.patches, jumpPatch{at: len(f.code), label: label})
+	f.emit(OpForIPrep, cv, kv, 0, 0, at)
 }
 
 // saveVar はループ変数の退避を発行する（SAVEVAR）。
@@ -900,6 +991,171 @@ func (f *fcomp) assignCompound(target Expr, op TokenType, rv uint8, at Pos) erro
 		f.emit(OpSetI, cur, idxs[i], fin, 0, node.At)
 	}
 	return nil
+}
+
+// compoundStmt は `target op= value` を発行する。
+// 変数ターゲットの +/- は融合命令（INCCHK＋低速スタブ）に落とす。
+func (f *fcomp) compoundStmt(n *CompoundAssignStmt) error {
+	if t, ok := n.Target.(*VarExpr); ok && (n.Op == TokPlus || n.Op == TokMinus) && !isBuiltin(t.Name) {
+		if lit, ok := constLiteral(n.Value); ok {
+			return f.fusedConst(t, n.Op, lit, n.At, n.Value.Pos())
+		}
+		rv, err := f.expr(n.Value)
+		if err != nil {
+			return err
+		}
+		if !nonVoidLit(n.Value) {
+			f.emit(OpCkVal, rv, 0, 0, 0, n.Value.Pos())
+		}
+		return f.fusedReg(t, n.Op, rv, n.At)
+	}
+	rv, err := f.expr(n.Value)
+	if err != nil {
+		return err
+	}
+	if !nonVoidLit(n.Value) {
+		f.emit(OpCkVal, rv, 0, 0, 0, n.Value.Pos())
+	}
+	return f.assignCompound(n.Target, n.Op, rv, n.At)
+}
+
+// incStub は融合の低速経路（プロトタイプ末尾に flush する）。
+// スタブ用レジスタは発行時に予約する（flush 時の新規割付は実行中の
+// 生存レジスタを壊すため）。文末の mark 復帰で解放される。
+type incStub struct {
+	target   *VarExpr
+	op       TokenType
+	rhsConst Value // 定数形の右辺値
+	stubRhs  uint8 // 低速経路の右辺（定数形は LOADK 先）
+	stubLv   uint8 // 低速経路の現在値
+	stubRes  uint8 // 低速経路の結果
+	rhsReg   uint8 // 高速の右辺（レジスタ形。定数形では未使用）
+	isConst  bool
+	at       Pos // 文位置（BINOP・結果検査用）
+	slow     int // 低速ラベル
+	end      int // 合流ラベル
+}
+
+// emitIncChk は INCCHK（2ワード）を発行し、低速スタブを登録する。
+func (f *fcomp) emitIncChk(t *VarExpr, op TokenType, a uint8, isConst bool, rhsConst Value, at Pos) error {
+	var flags uint8
+	if op == TokMinus {
+		flags |= IncSub
+	}
+	if !isConst {
+		flags |= IncRhsReg
+	} else if rhsConst.K == KInt {
+		flags |= IncConstInt
+	}
+	ni, err := f.nameIdx(t.Name)
+	if err != nil {
+		return err
+	}
+	var b uint8 = NoReg
+	if !f.isMain {
+		slot, ok := f.slots[t.Name]
+		if !ok {
+			return fmt.Errorf("内部エラー：スロット未割当 %q", t.Name)
+		}
+		b = uint8(slot)
+	}
+	// スタブ用レジスタを予約する（生存域は文末まで）。
+	stubLv, err := f.alloc()
+	if err != nil {
+		return err
+	}
+	stubRes, err := f.alloc()
+	if err != nil {
+		return err
+	}
+	stubRhs := a
+	if isConst {
+		stubRhs, err = f.alloc()
+		if err != nil {
+			return err
+		}
+		_ = rhsConst
+	}
+	slow := f.nextLabel()
+	end := f.nextLabel()
+	f.patches = append(f.patches, jumpPatch{at: len(f.code), label: slow})
+	f.emit(OpIncChk, a, b, flags, 0, t.At)
+	f.emitWord(EncodeInstr(0, 0, 0, 0, ni), at)
+	f.stubs = append(f.stubs, incStub{target: t, op: op, rhsConst: rhsConst, stubRhs: stubRhs, stubLv: stubLv, stubRes: stubRes, rhsReg: a, isConst: isConst, at: at, slow: slow, end: end})
+	// 高速はフォールスルーする（end＝直後）。
+	f.bindLabel(end)
+	return nil
+}
+
+// fusedConst は `x += リテラル` の融合（右辺評価なし）。
+func (f *fcomp) fusedConst(t *VarExpr, op TokenType, lit Value, at, rhsPos Pos) error {
+	ci, err := f.constIdx(lit)
+	if err != nil {
+		return err
+	}
+	if ci > 0xFF {
+		// 定数表が大きい稀な場合はレジスタ形に退避する。
+		rv, err := f.loadConst(lit, rhsPos)
+		if err != nil {
+			return err
+		}
+		return f.fusedReg(t, op, rv, at)
+	}
+	return f.emitIncChk(t, op, uint8(ci), true, lit, at)
+}
+
+// fusedReg は `x += 式` の融合（右辺レジスタ使用）。
+func (f *fcomp) fusedReg(t *VarExpr, op TokenType, rv uint8, at Pos) error {
+	return f.emitIncChk(t, op, rv, false, Null(), at)
+}
+
+// flushStubs は低速スタブをプロトタイプ末尾に発行する。
+// スタブはジャンプでのみ到達する（直後の HALT/RET の前に置かれるが、
+// フォールスルーでは到達しない）。一般経路と同一の検査・位置で発行する。
+func (f *fcomp) flushStubs() error {
+	for _, s := range f.stubs {
+		f.bindLabel(s.slow)
+		rhs := s.stubRhs
+		if s.isConst {
+			// 定数形の右辺をレジスタへ（LOADK 自体は検査しない）。
+			ci, err := f.constIdx(s.rhsConst)
+			if err != nil {
+				return err
+			}
+			f.emit(OpLoadK, rhs, 0, 0, ci, s.at)
+		}
+		ni, err := f.nameIdx(s.target.Name)
+		if err != nil {
+			return err
+		}
+		if f.isMain {
+			f.emit(OpLoadG, s.stubLv, 0, 0, ni, s.target.At)
+		} else {
+			slot, ok := f.slots[s.target.Name]
+			if !ok {
+				return fmt.Errorf("内部エラー：スロット未割当 %q", s.target.Name)
+			}
+			f.emit(OpLoadN, s.stubLv, 0, uint8(slot), ni, s.target.At)
+		}
+		bop, ok := binOpFor(s.op)
+		if !ok {
+			return fmt.Errorf("内部エラー：不正な複合代入です")
+		}
+		f.emit(bop, s.stubRes, s.stubLv, rhs, 0, s.at)
+		f.emit(OpCkVal, s.stubRes, 0, 0, 0, s.at)
+		if err := f.storeVar(s.target.Name, s.stubRes, s.target.At); err != nil {
+			return err
+		}
+		f.emitJump(OpJmp, 0, s.end, s.at)
+	}
+	f.stubs = nil
+	return nil
+}
+
+// emitWord はパッチ対象外の生ワード（INCCHK の word1 用）を発行する。
+func (f *fcomp) emitWord(ins Instr, at Pos) {
+	f.code = append(f.code, ins)
+	f.pos = append(f.pos, at)
 }
 
 // loadVar は変数読出を発行する。

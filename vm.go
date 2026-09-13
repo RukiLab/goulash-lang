@@ -64,6 +64,7 @@ type vmFrame struct {
 	regs   []Value
 	ro     []bool
 	loops  []vmLoop
+	cur    *vmLoop // loops 末尾の別名（ホットループ用キャッシュ）
 	retPC  int
 	retReg uint8
 }
@@ -104,9 +105,16 @@ func (m *vmachine) giveFrame(fr *vmFrame) {
 	fr.regs = nil
 	fr.ro = nil
 	fr.loops = nil
+	fr.cur = nil
 	fr.retPC = 0
 	fr.retReg = 0
 	m.framePool = append(m.framePool, fr)
+}
+
+// pushLoop はループ制御を積み、cur を更新する。
+func (m *vmachine) pushLoop(fr *vmFrame, l vmLoop) {
+	fr.loops = append(fr.loops, l)
+	fr.cur = &fr.loops[len(fr.loops)-1]
 }
 
 // takeRegs はプールからレジスタ列を取る（なければ確保）。
@@ -188,7 +196,9 @@ func (m *vmachine) addProg(prog *VMProgram) {
 			m.globals.intern(n)
 		}
 		// D 書換え：G系のみ。N系・CALL系は Names 引きのまま。
-		for i, ins := range p.Code {
+		// OpIncChk / OpRepInc は2ワード命令のため word1 を読み飛ばす。
+		for i := 0; i < len(p.Code); i++ {
+			ins := p.Code[i]
 			op, a, b, c, d := ins.Decode()
 			switch op {
 			case OpLoadG, OpStoreG, OpPutG:
@@ -197,6 +207,20 @@ func (m *vmachine) addProg(prog *VMProgram) {
 				if b&SaveIsGlobal != 0 {
 					p.Code[i] = EncodeInstr(op, a, b, c, uint32(m.globals.index[p.Names[d]]))
 				}
+			case OpIncChk:
+				// word1（名前表 index）はグローバル形のみ gidx へ。
+				if b == NoReg {
+					ni := uint32(p.Code[i+1])
+					p.Code[i+1] = EncodeInstr(0, 0, 0, 0, uint32(m.globals.index[p.Names[ni]]))
+				}
+				i++ // word1 を飛ばす
+			case OpRepInc:
+				// word1 下位（名前表 index）を gidx へ。上位の低速 sBx は保持。
+				w1 := uint64(p.Code[i+1])
+				ni := uint32(w1)
+				gi := uint32(m.globals.index[p.Names[ni]])
+				p.Code[i+1] = Instr(w1&0xFFFFFFFF00000000 | uint64(gi))
+				i++ // word1 を飛ばす
 			}
 		}
 	}
@@ -239,6 +263,11 @@ func (m *vmachine) restoreSave(fr *vmFrame, s vmSaved) {
 func (m *vmachine) popLoop(fr *vmFrame) {
 	top := fr.loops[len(fr.loops)-1]
 	fr.loops = fr.loops[:len(fr.loops)-1]
+	if n := len(fr.loops); n > 0 {
+		fr.cur = &fr.loops[n-1]
+	} else {
+		fr.cur = nil
+	}
 	for i := len(top.saves) - 1; i >= 0; i-- {
 		m.restoreSave(fr, top.saves[i])
 	}
@@ -255,13 +284,19 @@ func (m *vmachine) unwindAll() {
 }
 
 // runMain はプログラムの Main プロトタイプを実行する。
+// 終了時（エラー時も）はフレーム・深度を入口状態に戻す
+// （REPL 継続での汚染を防ぐ。tree の defer 深度復元と対応）。
 func (m *vmachine) runMain(prog *VMProgram) (err error) {
 	m.addProg(prog)
 	m.prog = prog
+	baseFrames := len(m.frames)
+	baseDepth := m.depth
 	defer func() {
 		if r := recover(); r != nil {
 			if _, ok := r.(endSignal); ok {
 				m.unwindAll()
+				m.dropFrames(baseFrames)
+				m.depth = baseDepth
 				err = nil
 				return
 			}
@@ -277,10 +312,20 @@ func (m *vmachine) runMain(prog *VMProgram) (err error) {
 	if err != nil {
 		m.unwindAll()
 	}
-	m.frames = m.frames[:len(m.frames)-1]
-	m.giveRegs(main.regs)
-	m.giveFrame(main)
+	m.dropFrames(baseFrames)
+	m.depth = baseDepth
 	return err
+}
+
+// dropFrames は baseFrames までフレームを破棄し、資源をプールへ返す。
+func (m *vmachine) dropFrames(baseFrames int) {
+	for len(m.frames) > baseFrames {
+		fr := m.frames[len(m.frames)-1]
+		m.frames = m.frames[:len(m.frames)-1]
+		m.giveRegs(fr.regs)
+		m.giveRO(fr.ro)
+		m.giveFrame(fr)
+	}
 }
 
 // evalOne は単一式を評価する（REPL の bare-expression echo 用）。
@@ -304,21 +349,22 @@ func (m *vmachine) evalOne(x Expr, at Pos) (Value, error) {
 	prog := &VMProgram{Main: proto}
 	m.addProg(prog)
 	m.prog = prog
+	baseFrames := len(m.frames)
+	baseDepth := m.depth
 	fr := m.takeFrame()
 	fr.proto = proto
 	fr.regs = m.takeRegs(proto.NumRegs)
 	m.frames = append(m.frames, fr)
 	err = m.loop(0)
-	m.frames = m.frames[:len(m.frames)-1]
 	if err != nil {
-		m.giveRegs(fr.regs)
-		m.giveFrame(fr)
 		m.unwindAll()
+		m.dropFrames(baseFrames)
+		m.depth = baseDepth
 		return Null(), err
 	}
 	out := fr.regs[rv]
-	m.giveRegs(fr.regs)
-	m.giveFrame(fr)
+	m.dropFrames(baseFrames)
+	m.depth = baseDepth
 	return out, nil
 }
 
@@ -415,14 +461,14 @@ func (m *vmachine) loop(pc int) error {
 				return rtErrf(pos, "条件式は bool 型である必要があります。%s が指定されました", typeNameOf(regs[a]))
 			}
 		case OpJmp:
-			next = pc + 1 + int(ins.SBx())
+			next = pc + 1 + int(int32(d))
 		case OpJmpT:
 			if regs[a].B {
-				next = pc + 1 + int(ins.SBx())
+				next = pc + 1 + int(int32(d))
 			}
 		case OpJmpF:
 			if !regs[a].B {
-				next = pc + 1 + int(ins.SBx())
+				next = pc + 1 + int(int32(d))
 			}
 		case OpCkInt:
 			if regs[a].K != KInt {
@@ -691,7 +737,7 @@ func (m *vmachine) loop(pc int) error {
 			v := regs[a]
 			switch v.K {
 			case KArray:
-				next = pc + 1 + int(ins.SBx())
+				next = pc + 1 + int(int32(d))
 			case KInt:
 			default:
 				return rtErrf(pos, "repeat は整数または配列が必要です。%s が指定されました", typeNameOf(v))
@@ -706,21 +752,26 @@ func (m *vmachine) loop(pc int) error {
 			if v.I < 0 {
 				return rtErrf(pos, "repeat の回数は 0 以上である必要があります。%d が指定されました", v.I)
 			}
-			fr.loops = append(fr.loops, vmLoop{limit: v.I, idx: -1})
+			m.pushLoop(fr, vmLoop{limit: v.I, idx: 0})
+			if v.I <= 0 {
+				next = pc + 1 + int(int32(d))
+			} else if b != NoReg {
+				regs[b] = Int(0)
+			}
 		case OpForAPrep:
 			v := regs[a]
 			if v.K != KArray {
 				return rtErrf(pos, "repeat は整数または配列が必要です。%s が指定されました", typeNameOf(v))
 			}
 			snap := append([]Value(nil), v.Arr.Elems...)
-			fr.loops = append(fr.loops, vmLoop{isArray: true, idx: -1, snap: snap})
+			m.pushLoop(fr, vmLoop{isArray: true, idx: -1, snap: snap})
 		case OpSaveVar:
 			flags := b
 			isGlobal := flags&SaveIsGlobal != 0
 			if isGlobal {
 				gi := int(d)
 				sv := vmSaved{isGlobal: true, gidx: gi, had: m.globals.has[gi], val: m.globals.vals[gi], ro: m.globals.ro[gi]}
-				top := &fr.loops[len(fr.loops)-1]
+				top := fr.cur
 				top.saves = append(top.saves, sv)
 				if flags&SaveInitZero != 0 {
 					m.globals.vals[gi] = Int(0)
@@ -735,7 +786,7 @@ func (m *vmachine) loop(pc int) error {
 				if regs[slot].K != KNull {
 					sv.had = true
 				}
-				top := &fr.loops[len(fr.loops)-1]
+				top := fr.cur
 				top.saves = append(top.saves, sv)
 				if flags&SaveInitZero != 0 {
 					regs[slot] = Int(0)
@@ -745,18 +796,21 @@ func (m *vmachine) loop(pc int) error {
 				}
 			}
 		case OpForILoop:
-			top := &fr.loops[len(fr.loops)-1]
+			// ボトムテスト形：idx を進め、継続なら top へ戻り、
+			// 終了ならフォールスルーする。
+			top := fr.cur
 			top.idx++
-			if top.idx >= top.limit {
-				next = pc + 1 + int(ins.SBx())
-			} else {
-				regs[a] = Int(top.idx)
+			if top.idx < top.limit {
+				if a != NoReg {
+					regs[a] = Int(top.idx)
+				}
+				next = pc + 1 + int(int32(d))
 			}
 		case OpForALoop:
-			top := &fr.loops[len(fr.loops)-1]
+			top := fr.cur
 			top.idx++
 			if top.idx >= int64(len(top.snap)) {
-				next = pc + 1 + int(ins.SBx())
+				next = pc + 1 + int(int32(d))
 			} else {
 				if a != NoReg {
 					regs[a] = Int(top.idx)
@@ -771,6 +825,122 @@ func (m *vmachine) loop(pc int) error {
 			gi := int(d)
 			m.globals.vals[gi] = regs[a]
 			m.globals.has[gi] = true
+		case OpIncChk:
+			// 複合代入(+/-)融合の高速経路。word1 が名前表 index
+			// （グローバル形は addProg で gidx へ書換え済み）。
+			// 低速（非整数）は sBx 先のスタブへ。
+			nameIdx := uint32(proto.Code[pc+1])
+			next = pc + 2
+			var rhs Value
+			rhsIsInt := c&IncConstInt != 0
+			if c&IncRhsReg != 0 {
+				rhs = regs[a]
+			} else {
+				rhs = proto.Consts[a]
+			}
+			sub := c&IncSub != 0
+			if b == NoReg {
+				// グローバル形。
+				gi := int(nameIdx)
+				if gi >= len(m.globals.has) || !m.globals.has[gi] {
+					name := "?"
+					if gi >= 0 && gi < len(m.globals.names) {
+						name = m.globals.names[gi]
+					}
+					return rtErrf(pos, "未定義の変数 %q です", name)
+				}
+				cur := m.globals.vals[gi]
+				if cur.K == KInt && (rhsIsInt || rhs.K == KInt) {
+					var nv int64
+					if sub {
+						nv = cur.I - rhs.I
+					} else {
+						nv = cur.I + rhs.I
+					}
+					if m.globals.ro[gi] {
+						return rtErrf(pos, "%q に代入できません：repeat カウンタは読み取り専用です", m.globals.names[gi])
+					}
+					m.globals.vals[gi] = Int(nv)
+				} else {
+					next = pc + 1 + int(int32(d))
+				}
+			} else {
+				// スロット形。
+				name := proto.Names[nameIdx]
+				slot := int(b)
+				if regs[slot].K != KNull {
+					cur := regs[slot]
+					if cur.K == KInt && (rhsIsInt || rhs.K == KInt) {
+						var nv int64
+						if sub {
+							nv = cur.I - rhs.I
+						} else {
+							nv = cur.I + rhs.I
+						}
+						if fr.ro[slot] {
+							return rtErrf(pos, "%q に代入できません：repeat カウンタは読み取り専用です", name)
+						}
+						regs[slot] = Int(nv)
+					} else {
+						next = pc + 1 + int(int32(d))
+					}
+				} else if gi, ok := m.globals.index[name]; ok && m.globals.has[gi] {
+					cur := m.globals.vals[gi]
+					if cur.K == KInt && (rhsIsInt || rhs.K == KInt) {
+						var nv int64
+						if sub {
+							nv = cur.I - rhs.I
+						} else {
+							nv = cur.I + rhs.I
+						}
+						if m.globals.ro[gi] {
+							return rtErrf(pos, "%q に代入できません：repeat カウンタは読み取り専用です", name)
+						}
+						m.globals.vals[gi] = Int(nv)
+					} else {
+						next = pc + 1 + int(int32(d))
+					}
+				} else {
+					return rtErrf(pos, "未定義の変数 %q です", name)
+				}
+			}
+		case OpRepInc:
+			// 計数ループ融合：本体（単一のグローバル加算）を取込んだループ。
+			// word1 上位＝低速 sBx、下位＝gidx（addProg 書換え済み）。
+			// 高速閉形：整数同士の反復加算は中間状態が観測不能
+			// （カウンタなし・本体単一・再入なし）のため、残り回数分を
+			// 一括適用する（mod 2^64 で反復と等価）。非整数は低速へ。
+			w1 := uint64(proto.Code[pc+1])
+			next = pc + 2
+			top := fr.cur
+			top.idx++
+			if top.idx <= top.limit {
+				gi := int(uint32(w1))
+				delta := proto.Consts[a]
+				if gi >= len(m.globals.has) || !m.globals.has[gi] {
+					name := "?"
+					if gi >= 0 && gi < len(m.globals.names) {
+						name = m.globals.names[gi]
+					}
+					return rtErrf(pos, "未定義の変数 %q です", name)
+				}
+				cur := m.globals.vals[gi]
+				if cur.K == KInt && delta.K == KInt {
+					if m.globals.ro[gi] {
+						return rtErrf(pos, "%q に代入できません：repeat カウンタは読み取り専用です", m.globals.names[gi])
+					}
+					rest := top.limit - top.idx + 1
+					if c&IncSub != 0 {
+						m.globals.vals[gi] = Int(cur.I - delta.I*rest)
+					} else {
+						m.globals.vals[gi] = Int(cur.I + delta.I*rest)
+					}
+					// 閉形で完結したため end（POPLOOP）へフォールスルー。
+				} else {
+					// 低速スタブへ（低速 sBx は word1 上位）。
+					next = pc + 1 + int(int32(uint32(w1>>32)))
+				}
+			}
 		case OpPopLoop:
 			m.popLoop(fr)
 		case OpFuncDef:

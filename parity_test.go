@@ -190,6 +190,22 @@ var parityCases = []string{
 	"i = 1\ns = \"a\" + i + [1][0]\nmes(s)\n",
 	"a = [1,2,3,4]\ns = 0\nrepeat a as x {\ns += x\n}\nmes(s)\n",
 	"x = 0\nrepeat 100 as i {\nx = x + i\n}\nmes(x)\n",
+	// 単一加算ループ（REPINC 融合の対象形）。
+	"i = 0\nrepeat 5 {\ni += 1\n}\nmes(i)\n",
+	"i = 0\nrepeat 100000 {\ni += 1\n}\nmes(i)\n",
+	"i = 10\nrepeat 5 {\ni -= 3\n}\nmes(i)\n",
+	"i = 0\nrepeat 0 {\ni += 1\n}\nmes(i)\n",
+	"i = 0\nrepeat 1 {\ni += 1\n}\nmes(i)\n",
+	"repeat 3 {\nzzz_repinc_undef += 1\n}\n",
+	"s = \"a\"\nrepeat 3 {\ns += 1\n}\nmes(s)\n",
+	"x = 1.5\nrepeat 3 {\nx += 2\n}\nmes(x)\n",
+	"b = true\nrepeat 2 {\nb += 1\n}\n",
+	"i = 9223372036854775800\nrepeat 3 {\ni += 5\n}\nmes(i)\n",
+	"i = 0\nrepeat 3 {\nrepeat 2 {\ni += 1\n}\n}\nmes(i)\n",
+	"def f_repinc() {\nt = 0\nrepeat 5 {\nt += 1\n}\nreturn t\n}\nmes(f_repinc())\n",
+	"i = 0\nx = 2\nrepeat 3 {\ni += x\n}\nmes(i)\n",
+	"repeat 2 as g_repinc {\nrepeat 3 {\ng_repinc += 1\n}\n}\n",
+	"i = 0\nrepeat 3 as k {\ni += 1\n}\nmes(i)\nmes(k)\n",
 }
 
 func TestParityInline(t *testing.T) {

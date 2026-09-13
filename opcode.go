@@ -15,7 +15,29 @@ package main
 import "fmt"
 
 // Op は命令コード（8bit に収まること）。
+//
+// OpIncChk / OpRepInc は2ワード命令である。
+// INCCHK: word0 が [op|A=右辺(reg/const) B=スロット(NoRegでグローバル)
+//
+//	C=フラグ D=sBx(低速)]、word1 が名前表 index
+//	（グローバル形は addProg で gidx へ書換え）。
+//	C bit0=sub(1)/add(0)、bit1=右辺reg(1)/const(0)。
+//	低速スタブはプロトタイプ末尾に置き、高速はフォールスルーする。
+//
+// REPINC: 本体が単一のグローバル定数INCCHKである計数ループの融合。
+//
+//	word0 が [op|A=定数index C=subフラグ D=sBx(topへ)]、
+//	word1 が [上位32bit=sBx(低速) 下位32bit=名前表index→gidx]。
+//	idx++ して終了ならフォールスルー（end の POPLOOP へ）、
+//	継続なら加算（低速はスタブへ）して top（＝自身）へ戻る。
 type Op uint8
+
+// IncChk フラグ（OpIncChk の C オペランド）。
+const (
+	IncSub      = 1 << iota // 減算（なければ加算）
+	IncRhsReg               // 右辺がレジスタ（なければ定数）
+	IncConstInt             // 定数形かつ右辺が int（タグ検査省略可）
+)
 
 const (
 	OpMove      Op = iota // MOVE A,B        R[A] = R[B]
@@ -68,6 +90,8 @@ const (
 	OpPopLoop             // POPLOOP         ループ制御 pop＋束縛復元
 	OpFuncDef             // FUNCDEF Bx      関数登録（実行時検査つき）
 	OpCkCall              // CKCALL C,D      呼出の事前解決（C:引数個数 D:名前）
+	OpIncChk              // INCCHK 2ワード複合代入(+/-)融合（低速時は sBx へ）
+	OpRepInc              // REPINC 2ワード計数ループ融合（本体が単一INCCHK時に置換）
 	OpCallF               // CALLF A,B,C,D   ユーザ関数（A:戻先 B:引数基底 C:個数 D:名前）
 	OpCallB               // CALLB A,B,C,D   組込関数（A:戻先 B:引数基底 C:個数 D:組込ID）
 	OpCallV               // CALLV A,D       非変数 callee 呼出（常にエラー、A:callee D:表記）
@@ -221,6 +245,10 @@ func (op Op) String() string {
 		return "FUNCDEF"
 	case OpCkCall:
 		return "CKCALL"
+	case OpIncChk:
+		return "INCCHK"
+	case OpRepInc:
+		return "REPINC"
 	case OpCallF:
 		return "CALLF"
 	case OpCallB:

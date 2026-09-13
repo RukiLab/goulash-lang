@@ -40,6 +40,7 @@ Goulash 処理系の変更履歴です。v0.2 は未リリースのため、す�
 - 設計書 `docs/DESIGN_VM.md`：`interp.go` セマンティクス確認結果・命令セット・lowering・検証結果
 - VM を既定バックエンドに変更（`GOULASH_BACKEND=tree` でツリーウォークに戻せる。観測可能動作は同一）
 - `gsh build <file.gsh> [-o out.exe]`：バイトコード連結の単一exe生成（`#mode` 記録・`--gui`/`--cui` 上書き可・スクリプト引数透過・入替えビルド対応）
+- ホットループ最適化：複合代入融合（`INCCHK`＋低速スタブ）・整数 `repeat` のボトムテスト化・単一加算ループ融合（`REPINC` 閉形）。`examples/bench.gsh`（1000万回加算）が wall 0.9秒→0.12秒前後に
 
 ### 変更（破壊的）
 - コマンド名：`hsp-next` → `gou` → `gsh`。モジュールも `gsh`（`gsh/gui`）に統一。言語名 `Goulash` は維持

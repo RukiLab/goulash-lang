@@ -145,6 +145,35 @@ func timeVM(t *testing.T, src string) time.Duration {
 	return time.Since(start)
 }
 
+// TestVMRepIncClosedForm は単一加算ループの閉形最適化を検証する。
+// 1000万回の反復が一括適用で完結すること（値の正確さ＋余裕ある時間内）。
+func TestVMRepIncClosedForm(t *testing.T) {
+	src := "i = 0\nrepeat 10000000 {\ni += 1\n}\nmes(i)\n"
+	prog, err := Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	vprog, err := Compile(prog)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	var buf bytes.Buffer
+	in := NewInterpWithIO(&buf, strings.NewReader(""))
+	start := time.Now()
+	if err := newVmachine(in).runMain(vprog); err != nil {
+		t.Fatalf("vm run: %v", err)
+	}
+	dur := time.Since(start)
+	if buf.String() != "10000000\n" {
+		t.Fatalf("got %q want %q", buf.String(), "10000000\n")
+	}
+	// 閉形でなければ秒単位かかる。1秒は十分に余裕ある上限。
+	if dur > time.Second {
+		t.Fatalf("too slow (closed form broken?): %v", dur)
+	}
+	t.Logf("10M-inc loop: %v", dur)
+}
+
 func BenchmarkTreeNumLoop(b *testing.B) {
 	prog := mustParseB(b, benchLoopSrc)
 	b.ResetTimer()

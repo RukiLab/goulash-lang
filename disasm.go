@@ -95,7 +95,12 @@ func formatInstrProg(prog *VMProgram, proto *VMProto, pc int) string {
 	case OpRepIntErr:
 		return "REPITMERR"
 	case OpForIPrep:
-		return fmt.Sprintf("FORIPREP %s", r(a))
+		return fmt.Sprintf("FORIPREP %s, %s, %d", r(a), regOrNone(b), pc+1+int(ins.SBx()))
+	case OpIncChk:
+		// word1（名前表 index）は呼出側で解決して表示する。
+		return fmt.Sprintf("INCCHK %s, slot=%s, flags=%d, ->%d [+data]", incRhs(proto, a, c), incSlot(b), c, pc+1+int(ins.SBx()))
+	case OpRepInc:
+		return fmt.Sprintf("REPINC %s, flags=%d, top=%d [+data]", incRhs(proto, a, c), c, pc+1+int(ins.SBx()))
 	case OpForAPrep:
 		return fmt.Sprintf("FORAPREP %s", r(a))
 	case OpSaveVar:
@@ -142,6 +147,23 @@ func regOrNone(x uint8) string {
 		return "-"
 	}
 	return fmt.Sprintf("R%d", x)
+}
+
+func incRhs(proto *VMProto, a, c uint8) string {
+	if c&IncRhsReg != 0 {
+		return fmt.Sprintf("R%d", a)
+	}
+	if int(a) < len(proto.Consts) {
+		return "K" + fmt.Sprintf("%d(%s)", a, valueRepr(proto.Consts[a]))
+	}
+	return fmt.Sprintf("K%d", a)
+}
+
+func incSlot(b uint8) string {
+	if b == NoReg {
+		return "G"
+	}
+	return fmt.Sprintf("S%d", b)
 }
 
 func saveVarName(proto *VMProto, b, c uint8, d uint32) string {
@@ -195,8 +217,23 @@ func Disassemble(prog *VMProgram) string {
 				fmt.Fprintf(&sb, "  N%d = %s\n", i, n)
 			}
 		}
-		for pc := range p.Code {
+		for pc := 0; pc < len(p.Code); pc++ {
 			fmt.Fprintf(&sb, "  %4d  %-28s ; %s\n", pc, formatInstrProg(prog, p, pc), p.Positions[pc])
+			if op, _, _, _, _ := p.Code[pc].Decode(); op == OpIncChk || op == OpRepInc {
+				// word1（名前表 index／REPINC は上位に低速 sBx）を表示して読み飛ばす。
+				w1 := uint64(p.Code[pc+1])
+				ni := uint32(w1)
+				name := fmt.Sprintf("N%d", ni)
+				if int(ni) < len(p.Names) {
+					name = fmt.Sprintf("N[%s]", p.Names[ni])
+				}
+				if op == OpRepInc {
+					slowOff := int32(uint32(w1 >> 32))
+					name = fmt.Sprintf("%s slow=%d", name, pc+1+int(slowOff))
+				}
+				pc++
+				fmt.Fprintf(&sb, "  %4d  %-28s ; %s\n", pc, "DATA "+name, p.Positions[pc])
+			}
 		}
 	}
 	dump(prog.Main)
