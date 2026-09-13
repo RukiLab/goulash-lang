@@ -399,6 +399,9 @@ func TestConsoleIO(t *testing.T) {
 	mustOutIO(t, "pos(3, 4)\n", "", "\x1b[5;4H")
 	mustOutIO(t, "pos(-1, 0)\n", "", "\x1b[1;0H")
 	mustOutIO(t, "pos(-5, -3)\n", "", "\x1b[-2;-4H")
+	// mes()/print() follow the cursor on CUI too (terminal positions).
+	mustOutIO(t, "pos(5, 2)\nmes(\"hi\")\n", "", "\x1b[3;6Hhi\n")
+	mustOutIO(t, "pos(1, 1)\nprint(\"ab\")\npos(4, 1)\nprint(\"cd\")\n", "", "\x1b[2;2Hab\x1b[2;5Hcd")
 	mustOutIO(t, "title(\"T\")\n", "", "\x1b]0;T\x07")
 	mustErrIO(t, "title(\"a\\0b\")\n", "NUL")
 	mustOutIO(t, "print(\"x\", \"bold\")\nprint(\"y\")\n", "", "\x1b[1mx\x1b[22;23;24my")

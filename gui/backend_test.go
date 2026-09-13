@@ -391,6 +391,71 @@ func TestPrintlnState(t *testing.T) {
 	}
 }
 
+// TestPrintlnHonorsPos covers pos() + mes()/print() positioning:
+// a bare mes() starts at the text cursor, and pos() flushes a pending
+// print() partial first (matching the immediate CUI terminal).
+func TestPrintlnHonorsPos(t *testing.T) {
+	b := mustNew(t)
+	cw, lh := b.charW, b.lineH
+	at := func(cx, cy int) (int, int) { return int(float64(cx) * cw), int(float64(cy) * lh) }
+	b.Println("plain", 0)
+	x, y := at(5, 2)
+	b.MoveTo(x, y)
+	b.Println("hi", 0)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.segs) != 2 {
+		t.Fatalf("segs: %+v", b.segs)
+	}
+	if b.segs[0].x != 0 || b.segs[0].y != 0 || b.segs[0].s != "plain" {
+		t.Fatalf("segs[0]: %+v", b.segs[0])
+	}
+	if b.segs[1].x != 5 || b.segs[1].y != 2 || b.segs[1].s != "hi" {
+		t.Fatalf("segs[1]: %+v", b.segs[1])
+	}
+}
+
+// TestPrintlnMultilinePos checks continuation lines restart at column 0.
+func TestPrintlnMultilinePos(t *testing.T) {
+	b := mustNew(t)
+	cw, lh := b.charW, b.lineH
+	b.MoveTo(int(3*cw), int(4*lh))
+	b.Println("a\nb", 0)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.segs) != 2 {
+		t.Fatalf("segs: %+v", b.segs)
+	}
+	if b.segs[0].x != 3 || b.segs[0].y != 4 || b.segs[0].s != "a" {
+		t.Fatalf("segs[0]: %+v", b.segs[0])
+	}
+	if b.segs[1].x != 0 || b.segs[1].y != 5 || b.segs[1].s != "b" {
+		t.Fatalf("segs[1]: %+v", b.segs[1])
+	}
+}
+
+// TestMoveToFlushesPartial locks the print/pos/print composition:
+// the first fragment stays where print() started it.
+func TestMoveToFlushesPartial(t *testing.T) {
+	b := mustNew(t)
+	cw, lh := b.charW, b.lineH
+	b.Print("ab", 0)
+	b.MoveTo(int(4*cw), int(lh))
+	b.Print("cd", 0)
+	b.Println("ef", 0)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.segs) != 2 {
+		t.Fatalf("segs: %+v", b.segs)
+	}
+	if b.segs[0].x != 0 || b.segs[0].s != "ab" {
+		t.Fatalf("segs[0]: %+v", b.segs[0])
+	}
+	if b.segs[1].x != 4 || b.segs[1].s != "cdef" {
+		t.Fatalf("segs[1]: %+v", b.segs[1])
+	}
+}
+
 func TestPrintStyles(t *testing.T) {
 	b := mustNew(t)
 	b.Println("a", StyleBold)

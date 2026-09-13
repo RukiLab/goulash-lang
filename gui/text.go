@@ -35,14 +35,20 @@ func (b *WindowBackend) Println(s string, st TextStyle) {
 		b.flushPartialLocked()
 	}
 	firstFg, firstSt := b.fg, st
+	// No pending partial: the line starts at the text cursor, so
+	// mes() honors pos(). A pending partial keeps its start cell
+	// (the line printed so far belongs there; move the cursor first
+	// with pos() to start elsewhere — pos() flushes the partial).
+	firstX := b.curX
 	if b.partial != "" {
 		firstFg, firstSt = b.partFg, b.partSt
+		firstX = b.partX
 	}
 	full := b.partial + s
 	b.partial = ""
 	lines := strings.Split(full, "\n")
 	// First chunk completes the partial line.
-	b.segs = append(b.segs, textSeg{x: b.partX, y: b.curY, s: lines[0], fg: firstFg, st: firstSt})
+	b.segs = append(b.segs, textSeg{x: firstX, y: b.curY, s: lines[0], fg: firstFg, st: firstSt})
 	for _, ln := range lines[1:] {
 		b.curY++
 		b.segs = append(b.segs, textSeg{x: 0, y: b.curY, s: ln, fg: b.fg, st: st})
@@ -274,9 +280,12 @@ func (b *WindowBackend) caretPixels() (x, y float64, ok bool) {
 // cursor (gcopy etc); the text cursor (mes) is derived as the nearest
 // character cell so existing line-based text still works. In CUI the
 // console backend moves by character cells.
+// A pending print() partial is flushed first (CUI prints immediately,
+// so this keeps both backends positioned the same way).
 func (b *WindowBackend) MoveTo(x, y int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.flushPartialLocked()
 	b.gx = x
 	b.gy = y
 	// Text grid stays cell-based: map pixel pos to cell for mes/print.
