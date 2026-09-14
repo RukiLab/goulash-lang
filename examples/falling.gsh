@@ -490,7 +490,6 @@ def handle_input() {
             if can_move(1, 0) {
                 piece[P_COL] += 1
                 notify_lock_reset()
-                mmplay(sfx_move)
             }
             right_das = 0
         } else {
@@ -499,7 +498,6 @@ def handle_input() {
                 if can_move(1, 0) {
                     piece[P_COL] += 1
                     notify_lock_reset()
-                    mmplay(sfx_move)
                 }
             }
         }
@@ -515,7 +513,6 @@ def handle_input() {
             if can_move(-1, 0) {
                 piece[P_COL] -= 1
                 notify_lock_reset()
-                mmplay(sfx_move)
             }
             left_das = 0
         } else {
@@ -524,7 +521,6 @@ def handle_input() {
                 if can_move(-1, 0) {
                     piece[P_COL] -= 1
                     notify_lock_reset()
-                    mmplay(sfx_move)
                 }
             }
         }
@@ -705,7 +701,6 @@ def main() {
     screen(MINO_SIZE * COLS, MINO_SIZE * VISIBLE_ROWS)
     title("Tetris")
     mino_img = picload("examples/assets/mino.png")
-    sfx_move = mmload("examples/assets/sfx_move.mp3")
     init_game()
 
     while is_running {
