@@ -2,21 +2,30 @@
   "name": "goulash",
   "displayName": "Goulash",
   "description": "Goulash (.gsh) language support: syntax highlighting and editing helpers",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "goulash",
   "license": "MIT",
   "engines": {
     "vscode": "^1.80.0"
   },
   "main": "./extension.js",
-  "activationEvents": ["onLanguage:goulash"],
-  "categories": ["Programming Languages"],
+  "activationEvents": [
+    "onLanguage:goulash"
+  ],
+  "categories": [
+    "Programming Languages"
+  ],
   "contributes": {
     "languages": [
       {
         "id": "goulash",
-        "aliases": ["Goulash", "goulash"],
-        "extensions": [".gsh"],
+        "aliases": [
+          "Goulash",
+          "goulash"
+        ],
+        "extensions": [
+          ".gsh"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],

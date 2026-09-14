@@ -164,10 +164,18 @@ func fontDirs() []string {
 	}
 }
 
+// fontExts are the tried extensions for extension-less font specs,
+// in preference order.
+var fontExts = []string{".ttc", ".ttf", ".otf"}
+
 // resolveFontSpec resolves a font() typeface spec to a file path: an
 // existing path is used as-is, otherwise bare names (with or without
 // extension) are searched in the system font directories
 // (case-insensitive base-name match; extension tried when omitted).
+// An extension-less spec that matches nothing exactly falls back to a
+// prefix match (e.g. "PlemolJP" finds "PlemolJP-Regular.ttf"),
+// preferring the Regular weight; otherwise the first name
+// alphabetically wins. Directories keep their priority order.
 func resolveFontSpec(spec string) (string, error) {
 	if spec == "" {
 		return "", fmt.Errorf("font: 空のフォント指定です")
@@ -178,9 +186,10 @@ func resolveFontSpec(spec string) (string, error) {
 		}
 		return spec, nil
 	}
+	bare := filepath.Ext(spec) == ""
 	exts := []string{""}
-	if filepath.Ext(spec) == "" {
-		exts = []string{".ttc", ".ttf", ".otf"}
+	if bare {
+		exts = fontExts
 	}
 	for _, dir := range fontDirs() {
 		ents, err := os.ReadDir(dir)
@@ -199,7 +208,64 @@ func resolveFontSpec(spec string) (string, error) {
 			}
 		}
 	}
+	if bare {
+		if path, ok := prefixFontMatch(spec); ok {
+			return path, nil
+		}
+	}
 	return "", fmt.Errorf("font: フォント %q が見つかりません（スクリプト脇・カレント・システムフォントを確認しました）", spec)
+}
+
+// prefixFontMatch finds a font file whose base name starts with spec
+// (case-insensitive, extension-less specs only; exact matches are
+// handled before this runs). Within each directory the Regular weight
+// wins; otherwise the first name alphabetically wins (ReadDir sorts).
+// Directories keep their priority order.
+func prefixFontMatch(spec string) (string, bool) {
+	var first string
+	rs := []rune(spec)
+	for _, dir := range fontDirs() {
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		dirFirst := ""
+		for _, e := range ents {
+			if e.IsDir() {
+				continue
+			}
+			base, ok := fontBaseNoExt(e.Name())
+			if !ok {
+				continue
+			}
+			rb := []rune(base)
+			if len(rb) <= len(rs) || !strings.EqualFold(string(rb[:len(rs)]), spec) {
+				continue
+			}
+			cand := filepath.Join(dir, e.Name())
+			if dirFirst == "" {
+				dirFirst = cand
+			}
+			if rem := string(rb[len(rs):]); strings.EqualFold(rem, "-regular") || strings.EqualFold(rem, "regular") {
+				return cand, true
+			}
+		}
+		if first == "" {
+			first = dirFirst
+		}
+	}
+	return first, first != ""
+}
+
+// fontBaseNoExt strips a known font extension, reporting whether the
+// name is a font file at all.
+func fontBaseNoExt(name string) (string, bool) {
+	for _, ext := range fontExts {
+		if len(name) > len(ext) && strings.EqualFold(name[len(name)-len(ext):], ext) {
+			return name[:len(name)-len(ext)], true
+		}
+	}
+	return "", false
 }
 
 // isFontPath reports whether spec looks like a file path rather than a

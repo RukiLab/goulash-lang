@@ -350,6 +350,8 @@ type directive struct {
 // the line holds normal code. Malformed directives are an error
 // (reported at the directive line).
 func parseDirective(line string) (*directive, error) {
+	// Tolerate CRLF sources: lines arrive split on "\n" with "\r" kept.
+	line = strings.TrimSuffix(line, "\r")
 	trimmed := strings.TrimLeft(line, " \t")
 	if !strings.HasPrefix(trimmed, "#") {
 		return nil, nil

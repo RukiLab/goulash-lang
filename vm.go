@@ -201,7 +201,7 @@ func (m *vmachine) addProg(prog *VMProgram) {
 			ins := p.Code[i]
 			op, a, b, c, d := ins.Decode()
 			switch op {
-			case OpLoadG, OpStoreG, OpPutG:
+			case OpLoadG, OpStoreG, OpPutG, OpDefG:
 				p.Code[i] = EncodeInstr(op, a, b, c, uint32(m.globals.index[p.Names[d]]))
 			case OpSaveVar:
 				if b&SaveIsGlobal != 0 {
@@ -408,9 +408,7 @@ func (m *vmachine) loop(pc int) error {
 				}
 				m.globals.vals[gi] = v
 			} else {
-				m.globals.vals[gi] = v
-				m.globals.has[gi] = true
-				m.globals.ro[gi] = false
+				return rtErrf(pos, "未定義の変数 %q です", name)
 			}
 		case OpLoadN:
 			name := proto.Names[d]
@@ -446,10 +444,36 @@ func (m *vmachine) loop(pc int) error {
 					}
 					m.globals.vals[gi] = v
 				} else {
-					regs[slot] = v
-					fr.ro[slot] = false
+					return rtErrf(pos, "未定義の変数 %q です", name)
 				}
 			}
+		case OpDefG:
+			// Top-level `let`: define the global (declare, never just store).
+			gi := int(d)
+			name := m.globals.names[gi]
+			v := regs[a]
+			if err := requireValue(v, pos); err != nil {
+				return err
+			}
+			if isBuiltin(name) {
+				return rtErrf(pos, "%q に代入できません：組み込み関数です", name)
+			}
+			m.globals.vals[gi] = v
+			m.globals.has[gi] = true
+			m.globals.ro[gi] = false
+		case OpDefN:
+			// `let` in a function: always bind the slot (shadow globals).
+			name := proto.Names[d]
+			slot := int(c)
+			v := regs[a]
+			if err := requireValue(v, pos); err != nil {
+				return err
+			}
+			if isBuiltin(name) {
+				return rtErrf(pos, "%q に代入できません：組み込み関数です", name)
+			}
+			regs[slot] = v
+			fr.ro[slot] = false
 		case OpCkVal:
 			// requireValue のインライン化（文言同一）。
 			if regs[a].K == KNull {

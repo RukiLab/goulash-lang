@@ -54,10 +54,14 @@ func formatInstrProg(prog *VMProgram, proto *VMProto, pc int) string {
 		return fmt.Sprintf("LOADG %s, G[%s]", r(a), proto.Names[d])
 	case OpStoreG:
 		return fmt.Sprintf("STOREG %s, G[%s]", r(a), proto.Names[d])
+	case OpDefG:
+		return fmt.Sprintf("DEFG %s, G[%s]", r(a), proto.Names[d])
 	case OpLoadN:
 		return fmt.Sprintf("LOADN %s, N[%s], S%d", r(a), proto.Names[d], c)
 	case OpStoreN:
 		return fmt.Sprintf("STOREN %s, N[%s], S%d", r(a), proto.Names[d], c)
+	case OpDefN:
+		return fmt.Sprintf("DEFN %s, N[%s], S%d", r(a), proto.Names[d], c)
 	case OpCkVal:
 		return fmt.Sprintf("CKVAL %s", r(a))
 	case OpTest:

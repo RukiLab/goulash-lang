@@ -138,34 +138,30 @@ func TestCharStep(t *testing.T) {
 	if got := charStep(&st, "a", 0); got != "a" {
 		t.Fatalf("new = %q, want a", got)
 	}
-	// Holding below the delay stays quiet.
-	if got := charStep(&st, "a", 10); got != "" {
-		t.Fatalf("hold = %q, want empty", got)
+	// Same-tick re-poll stays quiet (no double report).
+	if got := charStep(&st, "a", 0); got != "" {
+		t.Fatalf("dup = %q, want empty", got)
 	}
-	// At the delay it refires, then every interval.
-	if got := charStep(&st, "a", repDelay); got != "a" {
-		t.Fatalf("delay fire = %q, want a", got)
+	// OS auto-repeat arrivals on later ticks pass through untouched.
+	if got := charStep(&st, "a", 1); got != "a" {
+		t.Fatalf("repeat = %q, want a", got)
 	}
-	if got := charStep(&st, "a", repDelay+repInterval); got != "a" {
-		t.Fatalf("interval fire = %q, want a", got)
+	if got := charStep(&st, "a", 2); got != "a" {
+		t.Fatalf("repeat2 = %q, want a", got)
 	}
-	// OS auto-repeat gaps (empty ticks under grace) keep the session.
-	if got := charStep(&st, "", repDelay+repInterval+1); got != "" {
+	// Different text always fires at once, even mid-tick.
+	if got := charStep(&st, "b", 2); got != "b" {
+		t.Fatalf("switch = %q, want b", got)
+	}
+	if got := charStep(&st, "b", 2); got != "" {
+		t.Fatalf("switch dup = %q, want empty", got)
+	}
+	// Gaps stay quiet; later arrivals still fire.
+	if got := charStep(&st, "", 3); got != "" {
 		t.Fatalf("gap = %q, want empty", got)
 	}
-	if got := charStep(&st, "a", repDelay+repInterval+2); got != "" {
-		t.Fatalf("gap resume = %q, want empty (before next)", got)
-	}
-	// Long silence ends the session; re-press fires at once.
-	if got := charStep(&st, "", repDelay+repInterval+2+repInterval+1); got != "" {
-		t.Fatalf("long gap = %q, want empty", got)
-	}
 	if got := charStep(&st, "a", 1000); got != "a" {
-		t.Fatalf("re-press = %q, want a", got)
-	}
-	// Different text always fires at once.
-	if got := charStep(&st, "b", 1001); got != "b" {
-		t.Fatalf("switch = %q, want b", got)
+		t.Fatalf("late = %q, want a", got)
 	}
 }
 
@@ -374,6 +370,61 @@ func TestFontPerUserDir(t *testing.T) {
 	}
 }
 
+// TestFontPrefixMatch covers extension-less prefix resolution: a bare
+// family name finds its files without an extension, preferring the
+// Regular weight over alphabetical order; exact base names still win,
+// and unknown names (with or without extension) still error.
+func TestFontPrefixMatch(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("per-user Fonts dir is a Windows concept")
+	}
+	dir := filepath.Join(t.TempDir(), "Microsoft", "Windows", "Fonts")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"ZZZPrefixTwo.ttf", "ZZZPrefixOne.ttf", "ZZZPrefix-Regular.ttf",
+		"ZZZExact.ttf", "ZZZExact-Bold.ttf",
+		"ZZZAlphaTwo.ttf", "ZZZAlphaOne.ttf",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("dummy"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("LOCALAPPDATA", filepath.Dir(filepath.Dir(filepath.Dir(dir))))
+	// Prefix, case-insensitive, Regular preferred over alphabetical first.
+	got, err := resolveFontSpec("zzzprefix")
+	if err != nil {
+		t.Fatalf("resolveFontSpec(prefix): %v", err)
+	}
+	if !strings.EqualFold(got, filepath.Join(dir, "ZZZPrefix-Regular.ttf")) {
+		t.Fatalf("prefix resolved = %q, want the Regular face", got)
+	}
+	// Alphabetical fallback without a Regular face.
+	got, err = resolveFontSpec("zzzalpha")
+	if err != nil {
+		t.Fatalf("resolveFontSpec(alpha): %v", err)
+	}
+	if !strings.EqualFold(got, filepath.Join(dir, "ZZZAlphaOne.ttf")) {
+		t.Fatalf("alpha resolved = %q, want first alphabetically", got)
+	}
+	// Exact base name still beats prefix matches.
+	got, err = resolveFontSpec("ZZZExact")
+	if err != nil {
+		t.Fatalf("resolveFontSpec(exact): %v", err)
+	}
+	if !strings.EqualFold(got, filepath.Join(dir, "ZZZExact.ttf")) {
+		t.Fatalf("exact resolved = %q, want the exact file", got)
+	}
+	// Unknown names still error, with or without an extension.
+	if _, err := resolveFontSpec("ZZZNoSuchFont"); err == nil {
+		t.Fatal("unknown prefix should error")
+	}
+	if _, err := resolveFontSpec("ZZZNoSuchFont.ttf"); err == nil {
+		t.Fatal("unknown filename should error")
+	}
+}
+
 func TestPrintlnState(t *testing.T) {
 	b := mustNew(t)
 	b.Println("Hello", 0)
@@ -453,6 +504,21 @@ func TestMoveToFlushesPartial(t *testing.T) {
 	}
 	if b.segs[1].x != 4 || b.segs[1].s != "cdef" {
 		t.Fatalf("segs[1]: %+v", b.segs[1])
+	}
+}
+
+// TestTextRowTop locks the mes/print row origin: text/v2 puts the
+// region top at the GeoM origin, so row tops sit exactly on the cell
+// grid (a stray +ascent once pushed every line ~one row down).
+func TestTextRowTop(t *testing.T) {
+	if got := textRowTop(0, 0, 20); got != 0 {
+		t.Fatalf("row0 = %v, want 0", got)
+	}
+	if got := textRowTop(2, 0, 20); got != 40 {
+		t.Fatalf("row2 = %v, want 40", got)
+	}
+	if got := textRowTop(5, 3, 20); got != 40 {
+		t.Fatalf("scrolled = %v, want 40", got)
 	}
 }
 
@@ -546,7 +612,7 @@ func TestReadImmediateIdleHeadless(t *testing.T) {
 	if got := b.ReadImmediate(); got != "" {
 		t.Fatalf("ReadImmediate = %q, want empty", got)
 	}
-	if b.charSt.live {
+	if b.charSt != (charRep{}) {
 		t.Fatal("charSt should be idle")
 	}
 }

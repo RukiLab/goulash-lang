@@ -28,9 +28,9 @@ import (
 //     exp/pow overflow, float("nan"/"inf"), and out-of-range int()
 //     conversions are all errors.
 //   - Compound assignment evaluates its target address exactly once.
-//   - Assignment inside a function updates the visible scope holding the
-//     name, or creates a call-local when new (documented, VM must resolve
-//     the store target at runtime).
+//   - Assignment updates the visible scope holding the name, or errors
+//     when the name is undeclared (declare it with let first; the VM
+//     resolves the store target at runtime and reports the same error).
 //   - Recursion is capped at maxCallDepth; source nesting at maxParseDepth.
 
 // RuntimeError is an execution error with source position.
@@ -91,7 +91,8 @@ func (e *Env) Define(name string, v Value) {
 	delete(e.readonly, name)
 }
 
-// Assign updates the defining scope, or defines in the current scope when new.
+// Assign updates the defining scope. An undeclared name is an error:
+// declare variables with let first.
 func (e *Env) Assign(name string, v Value, at Pos) error {
 	if scope, ok := e.find(name); ok {
 		if scope.readonly[name] {
@@ -100,8 +101,7 @@ func (e *Env) Assign(name string, v Value, at Pos) error {
 		scope.vars[name] = v
 		return nil
 	}
-	e.vars[name] = v
-	return nil
+	return rtErrf(at, "未定義の変数 %q です", name)
 }
 
 // Interp holds global state shared across statements (and REPL inputs).
@@ -275,6 +275,19 @@ func (in *Interp) execStmt(s Stmt, env *Env) error {
 			return err
 		}
 		return in.assignCompound(n.Target, n.Op, v, env, n.At)
+	case *LetStmt:
+		v, err := in.evalExpr(n.Value, env)
+		if err != nil {
+			return err
+		}
+		if err := requireValue(v, n.At); err != nil {
+			return err
+		}
+		if isBuiltin(n.Name) {
+			return rtErrf(n.At, "%q に代入できません：組み込み関数です", n.Name)
+		}
+		env.Define(n.Name, v)
+		return nil
 	case *DefStmt:
 		seen := map[string]bool{}
 		for _, p := range n.Params {

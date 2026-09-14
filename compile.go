@@ -289,6 +289,15 @@ func (f *fcomp) stmt(s Stmt) error {
 			f.emit(OpCkVal, rv, 0, 0, 0, n.Target.Pos())
 		}
 		return f.assign(n.Target, rv)
+	case *LetStmt:
+		rv, err := f.expr(n.Value)
+		if err != nil {
+			return err
+		}
+		if !nonVoidLit(n.Value) {
+			f.emit(OpCkVal, rv, 0, 0, 0, n.At)
+		}
+		return f.defineVar(n.Name, rv, n.At)
 	case *CompoundAssignStmt:
 		return f.compoundStmt(n)
 	case *DefStmt:
@@ -390,6 +399,9 @@ func collectSlots(b *BlockStmt, slots map[string]int) {
 			walkE(n.Value)
 		case *CompoundAssignStmt:
 			walkE(n.Target)
+			walkE(n.Value)
+		case *LetStmt:
+			add(n.Name)
 			walkE(n.Value)
 		case *IfStmt:
 			walkE(n.Cond)
@@ -834,6 +846,28 @@ func (f *fcomp) storeVar(name string, src uint8, at Pos) error {
 		return fmt.Errorf("内部エラー：スロット未割当 %q", name)
 	}
 	f.emit(OpStoreN, src, 0, uint8(slot), ni, at)
+	return nil
+}
+
+// --- let ---
+
+// defineVar emits `let name = RHS` (RHS already in rv, CKVAL done):
+// main defines the global via DEFG; a function always binds its own
+// slot (shadowing globals) via the dedicated DEFN op.
+func (f *fcomp) defineVar(name string, src uint8, at Pos) error {
+	ni, err := f.nameIdx(name)
+	if err != nil {
+		return err
+	}
+	if f.isMain {
+		f.emit(OpDefG, src, 0, 0, ni, at)
+		return nil
+	}
+	slot, ok := f.slots[name]
+	if !ok {
+		return fmt.Errorf("内部エラー：スロット未割当 %q", name)
+	}
+	f.emit(OpDefN, src, 0, uint8(slot), ni, at)
 	return nil
 }
 

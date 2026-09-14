@@ -37,6 +37,7 @@ const (
 	TokBreak    TokenType = "BREAK"
 	TokContinue TokenType = "CONTINUE"
 	TokReturn   TokenType = "RETURN"
+	TokLet      TokenType = "LET"
 
 	TokPlus         TokenType = "PLUS"         // +
 	TokMinus        TokenType = "MINUS"        // -
@@ -125,6 +126,7 @@ var keywords = map[string]TokenType{
 	"break":    TokBreak,
 	"continue": TokContinue,
 	"return":   TokReturn,
+	"let":      TokLet,
 	"true":     TokTrue,
 	"false":    TokFalse,
 }

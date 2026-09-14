@@ -95,7 +95,8 @@ func init() {
 	//
 	// GUI is immediate mode instead of line mode: input() returns
 	// characters typed since the previous call (IME-committed text
-	// included, key-repeat applied, "" when none) and never blocks,
+	// included, OS key-repeat for text plus synthesized repeat for
+	// control keys, "" when none) and never blocks,
 	// so a polling loop builds its own line editor (break on "\r",
 	// asc() for codes). A focused inputbox owns the stream (input()
 	// reports "" then). GUI takes no arguments: a prompt would spam

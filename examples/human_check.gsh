@@ -7,8 +7,8 @@
 screen(640, 480)
 title("human check")
 
-passed = []
-failed = []
+let passed = []
+let failed = []
 
 def ok(name) {
     push(passed, name)
@@ -161,10 +161,10 @@ pos(16, 40)
 mes("10秒: 日本語を変換確定させ、最後にEnter")
 mes("(確定文字列が input() で読める)")
 ime(1)
-s = ""
-t0 = tick()
+let s = ""
+let t0 = tick()
 while tick() - t0 < 600 {
-    k = input()
+    let k = input()
     if k != "" {
         if instr(k, "\r") >= 0 {
             break
@@ -179,7 +179,7 @@ mes("入力=" + s)
 ask("T6 ime input", "入力した通りに確定されたか")
 
 // ---- T7: 音声 ----
-snd = mmload("examples/assets/sfx_move.mp3")
+let snd = mmload("examples/assets/sfx_move.mp3")
 mmplay(snd)
 ask("T7 audio", "音が鳴ったか")
 mmstop()
@@ -189,7 +189,7 @@ cls()
 pos(16, 40)
 mes("5秒: 左矢印キーを押す")
 t0 = tick()
-hit = false
+let hit = false
 while tick() - t0 < 300 {
     if getkey(37) {
         hit = true
@@ -224,7 +224,7 @@ pos(16, 40)
 mes("離して→5秒: A を3秒ほど長押し（リピートで複数回 a が出る）")
 sleep(1000)
 t0 = tick()
-n = 0
+let n = 0
 while tick() - t0 < 300 {
     if input() == "a" {
         n = n + 1
@@ -301,8 +301,8 @@ pos(16, 40)
 mes("5秒: 左クリックする")
 t0 = tick()
 hit = false
-mx = 0
-my = 0
+let mx = 0
+let my = 0
 while tick() - t0 < 300 {
     if clicked() {
         hit = true

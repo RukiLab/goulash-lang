@@ -99,7 +99,9 @@ const (
 	OpBrkTop              // BRKTOP          トップレベルの break エラー
 	OpContTop             // CONTTOP         トップレベルの continue エラー
 	OpRetTop              // RETTOP          トップレベルの return エラー
-	OpHalt                // HALT            実行終了
+	OpHalt                // HALT
+	OpDefN                // DEFN A,C,D      define slot (let: always binds, no global fallback)
+	OpDefG                // DEFG A,D        define global (top-level let)            実行終了
 
 	OpCount // 命令数（番兵）
 )

@@ -1,17 +1,37 @@
 {
   "name": "Goulash",
   "scopeName": "source.goulash",
-  "fileTypes": ["gsh"],
+  "fileTypes": [
+    "gsh"
+  ],
   "patterns": [
-    {"include": "#comments"},
-    {"include": "#preprocessor"},
-    {"include": "#strings"},
-    {"include": "#numbers"},
-    {"include": "#keywords"},
-    {"include": "#constants"},
-    {"include": "#builtins"},
-    {"include": "#functionCalls"},
-    {"include": "#operators"}
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#preprocessor"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#builtins"
+    },
+    {
+      "include": "#functionCalls"
+    },
+    {
+      "include": "#operators"
+    }
   ],
   "repository": {
     "comments": {
@@ -78,7 +98,7 @@
       "patterns": [
         {
           "name": "keyword.control.goulash",
-          "match": "\\b(def|if|else|repeat|while|switch|case|default|as|break|continue|return)\\b"
+          "match": "\\b(def|if|else|repeat|while|switch|case|default|as|break|continue|return|let)\\b"
         }
       ]
     },

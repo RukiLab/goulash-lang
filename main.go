@@ -27,7 +27,7 @@ import (
 
 // goulashVersion は処理系の版です。版上げはこの1箇所だけ変えます。
 // usage と REPL バナーはここから組み立てられます。
-const goulashVersion = "0.2"
+const goulashVersion = "0.3"
 
 // useVM reports whether the register-VM backend is selected.
 // VM が既定。GOULASH_BACKEND=tree のときだけツリーウォークに戻る。

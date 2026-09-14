@@ -90,6 +90,20 @@ func (n *AssignStmt) String() string {
 	return fmt.Sprintf("%s = %s", n.Target.String(), n.Value.String())
 }
 
+// LetStmt is `let name = value`: always binds in the current scope
+// (shadowing outer bindings). The initializer is required.
+type LetStmt struct {
+	Name  string
+	Value Expr
+	At    Pos
+}
+
+func (n *LetStmt) Pos() Pos  { return n.At }
+func (n *LetStmt) stmtNode() {}
+func (n *LetStmt) String() string {
+	return fmt.Sprintf("let %s = %s", n.Name, n.Value.String())
+}
+
 // CompoundAssignStmt is `target op= value` (e.g. `x += 1`). Unlike the
 // old desugar, the target address is evaluated exactly once.
 type CompoundAssignStmt struct {

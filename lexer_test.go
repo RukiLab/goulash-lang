@@ -32,7 +32,7 @@ func TestLexBasic(t *testing.T) {
 }
 
 func TestLexKeywordsAndOps(t *testing.T) {
-	types := lexTypes(t, "def if else repeat while switch case default as break continue return == != <= >= && || & | ^ ~ << >> += -= *= /= %= &= |= ^= <<= >>= ! < > + - * / % = , : . ( ) [ ] { }")
+	types := lexTypes(t, "def if else repeat while switch case default as break continue return let == != <= >= && || & | ^ ~ << >> += -= *= /= %= &= |= ^= <<= >>= ! < > + - * / % = , : . ( ) [ ] { }")
 	found := map[TokenType]bool{}
 	for _, ty := range types {
 		found[ty] = true
@@ -45,7 +45,7 @@ func TestLexKeywordsAndOps(t *testing.T) {
 		}
 	}
 	for _, want := range []TokenType{TokDef, TokIf, TokElse, TokRepeat, TokWhile, TokSwitch, TokCase, TokDefault, TokAs, TokBreak,
-		TokContinue, TokReturn, TokEq, TokNotEq, TokLtEq, TokGtEq, TokAnd, TokOr,
+		TokContinue, TokReturn, TokLet, TokEq, TokNotEq, TokLtEq, TokGtEq, TokAnd, TokOr,
 		TokBitAnd, TokBitOr, TokBitXor, TokBitNot, TokShl, TokShr,
 		TokPlusAssign, TokMinusAssign, TokStarAssign, TokSlashAssign, TokModAssign,
 		TokBitAndAssign, TokBitOrAssign, TokBitXorAssign, TokShlAssign, TokShrAssign,

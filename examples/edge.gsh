@@ -1,14 +1,14 @@
 #mode cli
-a = [[[[[1, 2]]]]]
+let a = [[[[[1, 2]]]]]
 mes(a[0][0][0][0][1])
 a[0][0][0][0][0] = 99
 mes(a[0][0][0][0][0])
 
-data = [["Zed", 77]]
+let data = [["Zed", 77]]
 mes(data[0][0])
 mes(data[0][1])
 
-total = 0
+let total = 0
 repeat 5 {
     total = total + 1
 }
@@ -24,7 +24,7 @@ def mymax(a, b) {
 mes(mymax(3, 7))
 mes(mymax(9, 2))
 
-f = 2.5
+let f = 2.5
 mes(f * 4)
 mes(10 == 10.0)
 mes(true && !false)

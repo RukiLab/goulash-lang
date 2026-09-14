@@ -110,10 +110,10 @@ VM が既定（`GOULASH_BACKEND=tree` でツリーウォークに戻せる）。
   REPL の継続性（追加入力で蓄積）は共有の機械＋グローバル表で実現する。
 - 関数：仮引数＋静的収集名にスロットを割当て、未作成状態＝`void` で
   突入する。`LOADN`/`STOREN` は「スロット作成済み→直接／未作成→
-  グローバル／不在→新規はスロット作成」で `Env.Assign` と等価。
-  （「関数内から新規グローバルを作らない」もこの分岐で再現。）
+  グローバル／不在→未定義エラー」で `Env.Assign` と等価（`let` 必須化以降は作成しない）。
 - グローバルはロード時に intern され、G系命令の D は `addProg` で
   直接の gidx へ書換える（実行時ハッシュ検索なし＝インラインキャッシュ相当）。
+- `let`（関数内）は専用命令 `DEFN` で必ずスロットへ束縛する（`STOREN` の「空きならグローバル」フォールバックを使わない）。
 - 組込名への代入は実行時に拒否する（`STOREG`/`STOREN` 内検査）。
   静的に弾くと `mes("hi"); mes = 1` の出力順序が変わるためである。
 - フレーム・レジスタ・readonly ビットはサイズ別プールで再利用する
@@ -146,7 +146,7 @@ VM が既定（`GOULASH_BACKEND=tree` でツリーウォークに戻せる）。
 
 ## 3. 命令セット
 
-`MOVE LOADK LOADG STOREG LOADN STOREN CKVAL TEST JMP JMPT JMPF
+`MOVE LOADK LOADG STOREG LOADN STOREN DEFN DEFG CKVAL TEST JMP JMPT JMPF
 CKINT CKNEG CKARR CKBND GETI SETI NEWARR APPEND
 ADD SUB MUL DIV MOD BAND BOR BXOR SHL SHR EQ NE LT LE GT GE
 NOT NEG BITNOT

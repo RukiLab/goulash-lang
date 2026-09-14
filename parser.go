@@ -225,6 +225,8 @@ func (p *parser) parseStmt(top bool) (Stmt, error) {
 		return &ContinueStmt{At: posOf(t)}, nil
 	case TokReturn:
 		return p.parseReturn()
+	case TokLet:
+		return p.parseLet()
 	case TokRBrace:
 		return nil, p.errAt(t, "予期しない '}' です")
 	case TokStar:
@@ -486,6 +488,22 @@ func (p *parser) parseReturn() (Stmt, error) {
 		return nil, err
 	}
 	return &ReturnStmt{Value: v, At: posOf(kw)}, nil
+}
+
+func (p *parser) parseLet() (Stmt, error) {
+	kw := p.next() // let
+	name, err := p.expect(TokIdent)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(TokAssign); err != nil {
+		return nil, err
+	}
+	v, err := p.parseOr(true)
+	if err != nil {
+		return nil, err
+	}
+	return &LetStmt{Name: name.Lit, Value: v, At: posOf(kw)}, nil
 }
 
 // parseAssignOrExpr parses either `target = value` or a bare expression.

@@ -7,19 +7,22 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 )
 
-// Key-repeat timing in ticks (@60fps): first fire is immediate on a new
-// press, then repDelay ticks later, then every repInterval ticks.
+// Repeat timing in ticks (@60fps) for synthesized keys: first fire is
+// immediate on a new press, then repDelay ticks later, then every
+// repInterval ticks. Printable and IME-committed text already carries
+// the OS key repeat, so it passes through untouched (see charStep).
 const (
 	repDelay    = 24
-	repInterval = 4
+	repInterval = 2
 )
 
-// charRep tracks one immediate-input repeat session in wall ticks.
+// charRep dedups one immediate-input snapshot per tick. Printable and
+// IME-committed text already carries the OS key repeat, so it passes
+// through as-is; this only suppresses duplicate reports when input()
+// is polled more than once within the same tick.
 type charRep struct {
-	live bool
 	last string
-	next int64 // tick threshold for the next fire
-	seen int64 // last tick with input (grace tracking)
+	tick int64 // tick of the last delivery
 }
 
 // ctrlKeys maps physical control keys to the character input()
@@ -45,8 +48,8 @@ type ctrlState struct {
 	last  int64 // tick of the last fire
 }
 
-// ctrlStep fires on a new press, then while held with the same
-// repDelay/repInterval timing as charStep. Pure logic, unit-testable.
+// ctrlStep fires on a new press, then while held with the
+// repDelay/repInterval timing. Pure logic, unit-testable.
 func ctrlStep(st *ctrlState, down bool, now int64) bool {
 	if !down {
 		st.down = false
@@ -64,28 +67,19 @@ func ctrlStep(st *ctrlState, down bool, now int64) bool {
 }
 
 // charStep maps a per-frame rune snapshot to a firing string.
-// New text fires at once; held text refires after repDelay ticks,
-// then every repInterval ticks. Gaps under repInterval ticks keep the
-// session (bridging OS auto-repeat gaps); longer silence, or different
-// text, starts a new session.
+// Text is delivered once per tick: new text fires at once, and OS
+// auto-repeat arrivals on later ticks fire again untouched. A repeat
+// poll within the same tick reports "" so scripts never see the same
+// keystroke twice. Pure logic, unit-testable.
 func charStep(st *charRep, s string, now int64) string {
 	if s == "" {
-		if st.live && now-st.seen > repInterval {
-			st.live = false
-		}
 		return ""
 	}
-	if !st.live || s != st.last {
-		st.live, st.last, st.seen = true, s, now
-		st.next = now + repDelay
-		return s
+	if s == st.last && now == st.tick {
+		return ""
 	}
-	st.seen = now
-	if now >= st.next {
-		st.next = now + repInterval
-		return s
-	}
-	return ""
+	st.last, st.tick = s, now
+	return s
 }
 
 // Polling input (G2). Key/mouse queries hit ebiten directly (thread-safe);
@@ -325,11 +319,11 @@ func (b *WindowBackend) SetCursorVisible(on bool) {
 // the GUI input() builtin (immediate mode: never blocks). Text comes
 // from the OS (locale-dependent Unicode translation: layout, shift,
 // and caps-correct, e.g. Shift+A is "A"), including IME-committed
-// text drained from the pending stream. New text fires at once; held
-// text refires after repDelay ticks, then every repInterval ticks;
+// text drained from the pending stream. Text (including OS
+// key-repeat arrivals) fires at once, once per tick;
 // "" when nothing fires. Control keys are synthesized as their ASCII
 // characters (backspace "\x08", tab "\x09", enter "\r", esc "\x1b",
-// delete "\x7f") with the same repeat timing; use asc() for the
+// delete "\x7f") with synthesized repeat timing; use asc() for the
 // codes, and break accumulation loops on "\r". While a focused
 // inputbox owns the key stream it reports "" so keystrokes are not
 // processed twice. While the IME field is focused it owns the whole

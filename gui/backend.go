@@ -249,6 +249,14 @@ func (b *WindowBackend) Update() error {
 	return nil
 }
 
+// textRowTop returns the pixel top of text row cy (scroll-adjusted by
+// minY). text/v2 puts the rendering region's top at the GeoM origin,
+// so no ascent offset is added here; the baseline sits ascent lower
+// (used for the underline rule). Pure math, unit-testable.
+func textRowTop(cy, minY int, lineH float64) float64 {
+	return float64(cy-minY) * lineH
+}
+
 // Draw renders buffered text and widgets.
 func (b *WindowBackend) Draw(screen *ebiten.Image) {
 	screen.Fill(color.Black)
@@ -294,11 +302,11 @@ func (b *WindowBackend) Draw(screen *ebiten.Image) {
 			return
 		}
 		baseX := float64(cx) * charW
-		baseY := float64(cy-minY)*lineH + ascent
+		baseY := textRowTop(cy, minY, lineH)
 		italic := st&StyleItalic != 0
 		draw := func(dx float64) {
 			op := &text.DrawOptions{}
-			// text/v2 draws from the baseline, so shift down by the ascent.
+			// Region top lands on the origin; glyphs hang below it.
 			op.GeoM.Translate(baseX+dx, baseY)
 			if italic {
 				// Element (0,1) is b in x' = a*x + b*y + tx:
@@ -316,7 +324,7 @@ func (b *WindowBackend) Draw(screen *ebiten.Image) {
 		}
 		if st&StyleUnderline != 0 {
 			w, _ := text.Measure(s, face, lineH)
-			y := float32(baseY + descent*0.5)
+			y := float32(baseY + ascent + descent*0.5) // baseline + half descent
 			vector.StrokeLine(screen, float32(baseX), y, float32(baseX+w), y, underThick, fg, false)
 		}
 	}
