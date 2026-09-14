@@ -5,10 +5,10 @@
 //     D は用途別に符号なし Bx（定数・名前・プロトタイプ・組込ID・個数）
 //     または符号付き sBx（ジャンプオフセット。pc からの相対）として解釈する。
 //   - 各命令は高々1つのソース位置（Positions[pc]）だけを持つ。
-//     interp.go で複数位置を使い分ける検査（例：== の左右の void 検査、
+//     runtime.go で複数位置を使い分ける検査（例：== の左右の void 検査、
 //     代入 RHS の void 検査位置）は、コンパイラが CKVAL 等の検査命令を
 //     正しい位置付きで先行発行することで再現する。VM 側に位置テーブルは不要。
-//   - 純粋な値演算（add/arith/bitwise/shift/compare 等）は interp.go の
+//   - 純粋な値演算（add/arith/bitwise/shift/compare 等）は runtime.go の
 //     同名関数をそのまま呼び出す。文言・条件の一致は共有によって保証する。
 package main
 

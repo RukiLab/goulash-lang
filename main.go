@@ -2,14 +2,11 @@
 //
 // Usage:
 //
-//	gsh run <file.gsh> [--keep]
+//	gsh run <file.gsh>
 //	gsh repl
 //	gsh lex <file.gsh>
 //	gsh parse <file.gsh>
-//
-// --keep is accepted by `run` for forward compatibility (a future
-// transpiler backend may emit intermediate files) but is currently a no-op:
-// the VM generates no intermediate files.
+
 package main
 
 import (
@@ -38,7 +35,7 @@ func runProgram(in *Interp, prog *Program) error {
 var usage = `gsh: Goulash v` + goulashVersion + ` インタプリタ
 
 使い方:
-  gsh run <file.gsh> [--keep] [--gui] [--cui] [-- args...]   スクリプトを実行します
+  gsh run <file.gsh> [-- args...]   スクリプトを実行します
   gsh repl                               対話環境（REPL）を起動します
   gsh lex <file.gsh>                    字句トークン列を出力します（デバッグ用）
   gsh parse <file.gsh>                  構文木（AST）を出力します（デバッグ用）
@@ -49,9 +46,7 @@ var usage = `gsh: Goulash v` + goulashVersion + ` インタプリタ
 GOULASH_TRACE=1 でVM命令トレースを標準エラー出力します。
 
 実行モードはコード内の #mode cli/gui で指定します（省略時は gui で
-ウィンドウを開きます。--gui/--cui はコマンドラインからの強制指定で、
-#mode より優先されます）。
---keep は将来の互換性のために予約されており、現在は何も行いません。`
+ウィンドウを開きます）。`
 
 func main() {
 	// 単一exe（バンドル）実行：自 exe 末尾にバイトコードが連結されていれば、
@@ -93,8 +88,6 @@ func main() {
 func cmdRun(args []string) {
 	var file string
 	var scriptArgs []string
-	forceGUI := false
-	forceCUI := false
 	verbatim := false // after `--`: everything is a script argument
 	for _, a := range args {
 		if verbatim {
@@ -103,17 +96,6 @@ func cmdRun(args []string) {
 		}
 		if a == "--" {
 			verbatim = true
-			continue
-		}
-		if a == "--keep" {
-			continue // reserved; tree-walk generates no files
-		}
-		if a == "--gui" {
-			forceGUI = true
-			continue
-		}
-		if a == "--cui" {
-			forceCUI = true
 			continue
 		}
 		if file == "" && strings.HasPrefix(a, "-") {
@@ -138,16 +120,8 @@ func cmdRun(args []string) {
 		fmt.Fprintln(os.Stderr, "エラー:", err)
 		os.Exit(1)
 	}
-	// Precedence: --gui/--cui flags beat the in-code #mode; without
-	// flags #mode cli runs console, otherwise (gui or omitted) a
-	// window opens.
+	// #mode cli runs console, otherwise (gui or omitted) a window opens.
 	guiMode := mode == "gui"
-	if forceCUI {
-		guiMode = false
-	}
-	if forceGUI {
-		guiMode = true
-	}
 	if guiMode {
 		runGUI(file, prog, scriptArgs)
 		return
@@ -263,7 +237,7 @@ func runGUIWith(scriptDir string, scriptArgs []string, run func(in *Interp) erro
 	os.Exit(loopCode)
 }
 
-// runBundled は連結バイトコードを実行する。引数は --gui/--cui/-- を除き
+// runBundled は連結バイトコードを実行する。引数は -- を除き
 // すべてスクリプト引数になる。#mode はビルド時に記録したものを使う。
 // 相対パスの基準は exe のあるディレクトリ。
 func runBundled(exePath string, payload []byte, args []string) {
@@ -272,8 +246,6 @@ func runBundled(exePath string, payload []byte, args []string) {
 		fmt.Fprintln(os.Stderr, "エラー:", err)
 		os.Exit(1)
 	}
-	forceGUI := false
-	forceCUI := false
 	verbatim := false
 	scriptArgs := []string{}
 	for _, a := range args {
@@ -285,23 +257,9 @@ func runBundled(exePath string, payload []byte, args []string) {
 			verbatim = true
 			continue
 		}
-		if a == "--gui" {
-			forceGUI = true
-			continue
-		}
-		if a == "--cui" {
-			forceCUI = true
-			continue
-		}
 		scriptArgs = append(scriptArgs, a)
 	}
 	guiMode := mode == "gui"
-	if forceCUI {
-		guiMode = false
-	}
-	if forceGUI {
-		guiMode = true
-	}
 	if guiMode {
 		runGUIBundled(exePath, prog, scriptArgs)
 		return

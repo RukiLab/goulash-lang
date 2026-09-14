@@ -168,15 +168,20 @@ func fontDirs() []string {
 // in preference order.
 var fontExts = []string{".ttc", ".ttf", ".otf"}
 
-// resolveFontSpec resolves a font() typeface spec to a file path: an
-// existing path is used as-is, otherwise bare names (with or without
-// extension) are searched in the system font directories
-// (case-insensitive base-name match; extension tried when omitted).
-// An extension-less spec that matches nothing exactly falls back to a
-// prefix match (e.g. "PlemolJP" finds "PlemolJP-Regular.ttf"),
-// preferring the Regular weight; otherwise the first name
-// alphabetically wins. Directories keep their priority order.
-func resolveFontSpec(spec string) (string, error) {
+// resolveFontSpec resolves a font() typeface spec to a file path:
+//   - an existing path is used as-is;
+//   - otherwise extension-less names are completed in each search
+//     directory (extraDirs first, then the system font directories):
+//     exact file names (with an extension tried when omitted), then
+//     prefix matches (e.g. "PlemolJP" finds "PlemolJP-Regular.ttf"),
+//     preferring the Regular weight; otherwise the first name
+//     alphabetically wins. Directories keep their priority order.
+// An extension-bearing name that names no file falls through to the
+// directory search, so "Foo.ttf" still finds "Foo.ttf" or its Regular
+// face without a path.
+// extraDirs are caller-owned search roots (script directory, working
+// directory); the system directories always stay in the search order.
+func resolveFontSpec(spec string, extraDirs ...string) (string, error) {
 	if spec == "" {
 		return "", fmt.Errorf("font: 空のフォント指定です")
 	}
@@ -186,45 +191,64 @@ func resolveFontSpec(spec string) (string, error) {
 		}
 		return spec, nil
 	}
-	bare := filepath.Ext(spec) == ""
-	exts := []string{""}
-	if bare {
-		exts = fontExts
+	dirs := append([]string{}, extraDirs...)
+	dirs = append(dirs, fontDirs()...)
+	base := filepath.Base(spec)
+	if base == "" || strings.HasSuffix(spec, "/") || strings.HasSuffix(spec, "\\") {
+		return "", fmt.Errorf("font: フォント %q が見つかりません", spec)
 	}
-	for _, dir := range fontDirs() {
-		ents, err := os.ReadDir(dir)
-		if err != nil {
-			continue
-		}
-		for _, e := range ents {
-			if e.IsDir() {
+	for _, wantBase := range candidateBases(base) {
+		for _, dir := range dirs {
+			ents, err := os.ReadDir(dir)
+			if err != nil {
 				continue
 			}
-			name := e.Name()
-			for _, ext := range exts {
-				if strings.EqualFold(name, spec+ext) {
-					return filepath.Join(dir, name), nil
+			for _, e := range ents {
+				if e.IsDir() {
+					continue
+				}
+				if strings.EqualFold(e.Name(), wantBase) {
+					return filepath.Join(dir, e.Name()), nil
 				}
 			}
 		}
 	}
-	if bare {
-		if path, ok := prefixFontMatch(spec); ok {
+	if filepath.Ext(base) == "" {
+		if path, ok := prefixFontMatchIn(spec, dirs); ok {
 			return path, nil
 		}
 	}
-	return "", fmt.Errorf("font: フォント %q が見つかりません（スクリプト脇・カレント・システムフォントを確認しました）", spec)
+	return "", fmt.Errorf("font: フォント %q が見つかりません", spec)
+}
+
+// candidateBases lists the file names tried for an exact directory
+// match: the name itself first, then the known font extensions when the
+// spec carries none.
+func candidateBases(base string) []string {
+	out := []string{base}
+	if filepath.Ext(base) == "" {
+		for _, ext := range fontExts {
+			out = append(out, base+ext)
+		}
+	}
+	return out
 }
 
 // prefixFontMatch finds a font file whose base name starts with spec
 // (case-insensitive, extension-less specs only; exact matches are
-// handled before this runs). Within each directory the Regular weight
-// wins; otherwise the first name alphabetically wins (ReadDir sorts).
-// Directories keep their priority order.
+// handled before this runs). It searches dirs in order; within each
+// directory the Regular weight wins, otherwise the first name
+// alphabetically wins (ReadDir sorts). prefixFontMatch keeps the
+// original behavior over the system font directories.
 func prefixFontMatch(spec string) (string, bool) {
+	return prefixFontMatchIn(spec, fontDirs())
+}
+
+// prefixFontMatchIn is prefixFontMatch over explicit directories.
+func prefixFontMatchIn(spec string, dirs []string) (string, bool) {
 	var first string
 	rs := []rune(spec)
-	for _, dir := range fontDirs() {
+	for _, dir := range dirs {
 		ents, err := os.ReadDir(dir)
 		if err != nil {
 			continue
@@ -284,8 +308,10 @@ func isFontPath(spec string) bool {
 }
 
 // loadFontSpec parses a resolved-or-bare font spec into a face source.
-func loadFontSpec(spec string) (*text.GoTextFaceSource, string, error) {
-	path, err := resolveFontSpec(spec)
+// extraDirs are searched before the system font directories (script
+// directory, working directory).
+func loadFontSpec(spec string, extraDirs ...string) (*text.GoTextFaceSource, string, error) {
+	path, err := resolveFontSpec(spec, extraDirs...)
 	if err != nil {
 		return nil, "", err
 	}

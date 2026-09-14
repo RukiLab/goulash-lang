@@ -24,7 +24,7 @@ go build -o gsh .          # Linux / macOS
 ## 使い方
 
 ```sh
-gsh run <file.gsh> [--gui] [-- args...]   スクリプトを実行します
+gsh run <file.gsh> [-- args...]   スクリプトを実行します
 gsh repl                               対話環境（REPL）を起動します
 gsh lex <file.gsh>                     字句トークン列を出力します（デバッグ用）
 gsh parse <file.gsh>                   構文木を出力します（デバッグ用）
@@ -34,7 +34,7 @@ gsh parse <file.gsh>                   構文木を出力します（デバッ�
 
 ```sh
 gsh run examples/hello.gsh
-gsh run examples/gui_hello.gsh --gui
+gsh run examples/gui_hello.gsh
 ```
 
 ## サンプル

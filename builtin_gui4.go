@@ -3,6 +3,8 @@
 // otherwise they report an error.
 package main
 
+import "os"
+
 func init() {
 	// pngsave(path [, id]): save a draw buffer as PNG (id defaults to
 	// the current target).
@@ -84,10 +86,16 @@ func init() {
 		if err != nil {
 			return Null(), err
 		}
-		// A sibling font file wins over the system directories, but a
-		// bare name must keep falling through to them.
-		if q := in.lookupPath(spec); q != "" {
-			spec = q
+		// The script directory and the working directory are searched
+		// first (exact file names, extension completion, and prefix
+		// matches), then the system font directories. A bare name falls
+		// through when nothing matches.
+		dirs := []string{}
+		if d := in.ScriptDir(); d != "" {
+			dirs = append(dirs, d)
+		}
+		if cwd, err := os.Getwd(); err == nil {
+			dirs = append(dirs, cwd)
 		}
 		size := 0
 		if len(args) == 2 {
@@ -99,7 +107,7 @@ func init() {
 		} else {
 			size = wb.FontSize()
 		}
-		if err := wb.SetFontFile(spec, size); err != nil {
+		if err := wb.SetFontFile(spec, size, dirs...); err != nil {
 			return Null(), rtErrf(at, "%s", err.Error())
 		}
 		return Null(), nil

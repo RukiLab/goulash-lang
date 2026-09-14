@@ -256,12 +256,13 @@ func (b *WindowBackend) TextWidth(s string) int {
 
 // SetFontFile switches the typeface to spec (path or system font name)
 // at the given pixel size (8..64), updating cell metrics like
-// SetFontSize. Script-thread safe.
-func (b *WindowBackend) SetFontFile(spec string, size int) error {
+// SetFontSize. Script-thread safe. extraDirs are searched before the
+// system font directories (script directory, working directory).
+func (b *WindowBackend) SetFontFile(spec string, size int, extraDirs ...string) error {
 	if size < 8 || size > 64 {
 		return fmt.Errorf("font：サイズは 8 から 64 の範囲で指定してください。%d が指定されました", size)
 	}
-	src, path, err := loadFontSpec(spec)
+	src, path, err := loadFontSpec(spec, extraDirs...)
 	if err != nil {
 		return err
 	}

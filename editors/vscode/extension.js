@@ -4,7 +4,7 @@
 
 const vscode = require('vscode');
 
-function runScript(gui) {
+function runScript() {
   const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document.languageId !== 'goulash') {
     vscode.window.showWarningMessage('Goulash: .gsh ファイルを開いて実行してください');
@@ -20,14 +20,13 @@ function runScript(gui) {
       term = vscode.window.createTerminal('gsh');
     }
     term.show(true);
-    term.sendText(`gsh run "${file}"${gui ? ' --gui' : ''}`);
+    term.sendText(`gsh run "${file}"`);
   });
 }
 
 function activate(context) {
   context.subscriptions.push(
-    vscode.commands.registerCommand('goulash.run', () => runScript(false)),
-    vscode.commands.registerCommand('goulash.runGui', () => runScript(true))
+    vscode.commands.registerCommand('goulash.run', () => runScript())
   );
 }
 

@@ -218,7 +218,7 @@ BRKTOP CONTTOP RETTOP HALT`
   ランタイム exe の末尾に連結する（`AppendBundle`）。
   識別子＋長さの 16B trailer で検出する（`ExtractBundle`）。
 - 起動時は自 exe 末尾だけ見てバンドル判定し、有れば CLI の代わりに
-  内蔵プログラムを実行する（`--gui`/`--cui`/`--` 以外はスクリプト引数、
+  内蔵プログラムを実行する（`--` 以外はスクリプト引数、
   相対パスの基準は exe のあるディレクトリ）。
 - 連結済みを入力にしても `stripBundle` で入替えになり多重化しない。
 - バンドル実行は常に VM（組込表は遅延初期化のため `callBuiltinByID` 側でも

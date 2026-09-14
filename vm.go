@@ -1,6 +1,6 @@
 // Goulash v0.2 レジスタ型VMの実行ループ。
 //
-// interp.go との観測一致が最優先：純粋な値演算は interp.go の関数
+// runtime.go との観測一致が最優先：純粋な値演算は runtime.go の関数
 // （add/arith/bitwise/shift/compare/valuesEqual/applyBinary/setIndex
 // requireValue/requireBool）を直接呼び出すため、文言・条件がずれない。
 // 評価順序・検査位置は compile.go 側の発行順序で再現する。
@@ -274,7 +274,7 @@ func (m *vmachine) popLoop(fr *vmFrame) {
 }
 
 // unwindAll はエラー・end 時の全フレームの束縛復元。
-// interp.go の repeat における defer 復元（エラー時も実行）と対応する。
+// runtime.go の repeat における defer 復元（エラー時も実行）と対応する。
 func (m *vmachine) unwindAll() {
 	for _, fr := range m.frames {
 		for len(fr.loops) > 0 {

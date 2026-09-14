@@ -100,6 +100,12 @@ func (in *Interp) SetScriptDir(dir string) {
 	in.scriptDir = dir
 }
 
+// ScriptDir reports the directory recorded by SetScriptDir ("" when
+// unset, e.g. in the REPL).
+func (in *Interp) ScriptDir() string {
+	return in.scriptDir
+}
+
 // lookupPath resolves p against the script directory, then the working
 // directory, returning the first existing match ("" when none, or for
 // empty input). Absolute paths check existence directly.

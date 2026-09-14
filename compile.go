@@ -1,12 +1,12 @@
 // Goulash v0.2 AST → レジスタVMバイトコード・コンパイラ。
 //
 // 意味論の対応付け（詳細は docs/DESIGN_VM.md）：
-//   - 評価順序は interp.go と同一（RHS先行・L→R・添字系の内外順序まで再現）。
+//   - 評価順序は runtime.go と同一（RHS先行・L→R・添字系の内外順序まで再現）。
 //   - void/型/境界の検査位置は、検査命令（CKVAL/CKINT/CKNEG/CKARR）を
 //     正しい Pos 付きで先行発行することで再現する。
 //   - def は実行時登録（FUNCDEF）。前方参照は未定義エラーになる。
 //   - repeat の束縛退避・復元は SAVEVAR/POPLOOP＋VM側ループスタックで行い、
-//     break/return/エラー時の復元順序も interp.go の defer と一致させる。
+//     break/return/エラー時の復元順序も runtime.go の defer と一致させる。
 package main
 
 import "fmt"
@@ -882,7 +882,7 @@ func (f *fcomp) assign(target Expr, rv uint8) error {
 	return fmt.Errorf("内部エラー：不正な代入先です")
 }
 
-// assignIndex は interp.go の assignIndex と同一の評価順序・検査順序で発行する。
+// assignIndex は runtime.go の assignIndex と同一の評価順序・検査順序で発行する。
 // 単層：idx → CKINT/CKNEG → base → SETI。
 // 複層：外側 idx → CKINT/CKNEG → 内側 base（式として）→ 内側 idx →
 // CKARR(base) → CKINT → GETI（範囲）→ CKARR（要素）→ SETI。
@@ -1430,7 +1430,7 @@ func (f *fcomp) call(n *CallExpr) (uint8, error) {
 			checkVoid = false
 		}
 		// CKCALL：解決順序（関数→変数→組込→未定義）と arity を
-		// 引数評価より先に確定させる（interp.go の evalCall と同順）。
+		// 引数評価より先に確定させる（runtime.go の evalCall と同順）。
 		ni, err := f.nameIdx(v.Name)
 		if err != nil {
 			return 0, err

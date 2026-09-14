@@ -41,22 +41,12 @@
         "command": "goulash.run",
         "title": "Goulash: 実行",
         "category": "Goulash"
-      },
-      {
-        "command": "goulash.runGui",
-        "title": "Goulash: 実行 (GUI)",
-        "category": "Goulash"
       }
     ],
     "keybindings": [
       {
         "command": "goulash.run",
         "key": "F5",
-        "when": "editorLangId == goulash && editorTextFocus"
-      },
-      {
-        "command": "goulash.runGui",
-        "key": "ctrl+F5",
         "when": "editorLangId == goulash && editorTextFocus"
       }
     ]

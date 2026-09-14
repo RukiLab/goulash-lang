@@ -370,58 +370,51 @@ func TestFontPerUserDir(t *testing.T) {
 	}
 }
 
-// TestFontPrefixMatch covers extension-less prefix resolution: a bare
-// family name finds its files without an extension, preferring the
-// Regular weight over alphabetical order; exact base names still win,
-// and unknown names (with or without extension) still error.
-func TestFontPrefixMatch(t *testing.T) {
-	if runtime.GOOS != "windows" {
-		t.Skip("per-user Fonts dir is a Windows concept")
-	}
-	dir := filepath.Join(t.TempDir(), "Microsoft", "Windows", "Fonts")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		t.Fatal(err)
-	}
+// TestFontExtraDirs covers caller-owned search roots (script directory,
+// working directory): exact file names, extension-less names (with
+// extension completion), and extension-less prefix matches all resolve
+// there before the system directories, on any OS. The scan only needs
+// the file name, so dummy files suffice (no parsing involved).
+func TestFontExtraDirs(t *testing.T) {
+	dir := t.TempDir()
 	for _, name := range []string{
-		"ZZZPrefixTwo.ttf", "ZZZPrefixOne.ttf", "ZZZPrefix-Regular.ttf",
-		"ZZZExact.ttf", "ZZZExact-Bold.ttf",
-		"ZZZAlphaTwo.ttf", "ZZZAlphaOne.ttf",
+		"ZZZSibExact.ttf",
+		"ZZZSibExt.ttf",
+		"ZZZSibPrefix-Regular.ttf",
+		"ZZZSibPrefix-Bold.ttf",
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("dummy"), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	t.Setenv("LOCALAPPDATA", filepath.Dir(filepath.Dir(filepath.Dir(dir))))
-	// Prefix, case-insensitive, Regular preferred over alphabetical first.
-	got, err := resolveFontSpec("zzzprefix")
+	// Exact file name wins inside the extra dir.
+	got, err := resolveFontSpec("ZZZSibExact.ttf", dir)
 	if err != nil {
-		t.Fatalf("resolveFontSpec(prefix): %v", err)
+		t.Fatalf("resolveFontSpec(exact, dir): %v", err)
 	}
-	if !strings.EqualFold(got, filepath.Join(dir, "ZZZPrefix-Regular.ttf")) {
+	if !strings.EqualFold(got, filepath.Join(dir, "ZZZSibExact.ttf")) {
+		t.Fatalf("exact resolved = %q, want the sibling file", got)
+	}
+	// Extension-less name is completed inside the extra dir.
+	got, err = resolveFontSpec("zzzsibext", dir)
+	if err != nil {
+		t.Fatalf("resolveFontSpec(extless, dir): %v", err)
+	}
+	if !strings.EqualFold(got, filepath.Join(dir, "ZZZSibExt.ttf")) {
+		t.Fatalf("extless resolved = %q, want the sibling file", got)
+	}
+	// Extension-less prefix prefers the Regular face inside the extra dir.
+	got, err = resolveFontSpec("zzzsibprefix", dir)
+	if err != nil {
+		t.Fatalf("resolveFontSpec(prefix, dir): %v", err)
+	}
+	if !strings.EqualFold(got, filepath.Join(dir, "ZZZSibPrefix-Regular.ttf")) {
 		t.Fatalf("prefix resolved = %q, want the Regular face", got)
 	}
-	// Alphabetical fallback without a Regular face.
-	got, err = resolveFontSpec("zzzalpha")
-	if err != nil {
-		t.Fatalf("resolveFontSpec(alpha): %v", err)
-	}
-	if !strings.EqualFold(got, filepath.Join(dir, "ZZZAlphaOne.ttf")) {
-		t.Fatalf("alpha resolved = %q, want first alphabetically", got)
-	}
-	// Exact base name still beats prefix matches.
-	got, err = resolveFontSpec("ZZZExact")
-	if err != nil {
-		t.Fatalf("resolveFontSpec(exact): %v", err)
-	}
-	if !strings.EqualFold(got, filepath.Join(dir, "ZZZExact.ttf")) {
-		t.Fatalf("exact resolved = %q, want the exact file", got)
-	}
-	// Unknown names still error, with or without an extension.
-	if _, err := resolveFontSpec("ZZZNoSuchFont"); err == nil {
-		t.Fatal("unknown prefix should error")
-	}
-	if _, err := resolveFontSpec("ZZZNoSuchFont.ttf"); err == nil {
-		t.Fatal("unknown filename should error")
+	// Without the extra dir the same names are unknown (siblings beat the
+	// system search only when the caller puts them first).
+	if _, err := resolveFontSpec("ZZZSibExact.ttf"); err == nil {
+		t.Fatal("sibling name without its dir should error")
 	}
 }
 

@@ -48,7 +48,7 @@ func TestVMDefTiming(t *testing.T) {
 }
 
 func TestVMRepeatRestoreOnError(t *testing.T) {
-	// エラー時も repeat 束縛は復元される（interp.go の defer 対応）。
+	// エラー時も repeat 束縛は復元される（runtime.go の defer 対応）。
 	// REPL 的継続：同一機械で2入力。
 	prog1, _ := Parse("let x = 99\nrepeat 5 as x {\nmes(undefined_fn())\n}\n")
 	vprog1, _ := Compile(prog1)

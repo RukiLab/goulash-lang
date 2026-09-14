@@ -31,7 +31,7 @@
 主な特徴は以下のとおりです。
 
 * 同一バイナリで CUI と GUI を切り替えられます。
-* `#mode`・`--gui` / `--cui` で実行モードを指定します（特別なビルドは不要です）。
+* `#mode` で実行モードを指定します（特別なビルドは不要です）。
 * レジスタ型VMでコンパイルして動作します（中間ファイルを生成しません。`GOULASH_BACKEND=tree` でツリーウォークに戻せますが、観測可能動作は同一です）。
 * `if` や `while` などの条件式では、厳密に `bool` 型を要求します。
 * 日本語テキストは rune 単位で扱い、日本語も 1 文字として数えます。
@@ -72,7 +72,7 @@ gsh run examples/gui_hello.gsh
 # コマンドの使い方
 
 ```text
-gsh run <file.gsh> [--keep] [--gui] [--cui] [-- args...]   スクリプトを実行します
+gsh run <file.gsh> [-- args...]   スクリプトを実行します
 gsh repl                                            対話環境（REPL）を起動します
 gsh lex <file.gsh>                                  字句トークン列を表示します
 gsh parse <file.gsh>                                構文木（AST）を表示します
@@ -93,24 +93,6 @@ gsh run examples/hello.gsh
 ```
 
 スクリプトを実行します。
-
-### `--keep`
-
-将来のトランスパイラ向けに予約されているフラグです。
-
-v0.3 では何も行いませんが、指定してもエラーにはなりません。
-
-### `--gui` / `--cui`
-
-コマンドラインからの強制指定で、コード内の `#mode` より優先されます。
-
-```sh
-gsh run examples/gui_hello.gsh --gui
-gsh run examples/gui_hello.gsh --cui
-```
-
-`--gui` はウィンドウを開きます（GUIビルドでのみ有効）。
-`--cui` は端末で実行します（GUI組込の呼出は未定義エラーになります）。
 
 ### コマンドライン引数
 
@@ -136,7 +118,6 @@ gsh run main.gsh -- hello world
 - `#mode gui`：ウィンドウを開いて実行します
 - 省略時：`gui`（ウィンドウを開きます）
 - 複数ある場合：有効な行の最後が勝ちます（`#ifdef` の無効分岐内は無視、`#include` 先も対象）
-- `--gui` / `--cui` が指定された場合はそちらが優先されます
 
 ## `gsh repl`
 
@@ -193,7 +174,7 @@ gsh build examples/hello.gsh
 ```
 
 - 出力先の既定はスクリプトと同名の `.exe`（`-o` で変更可）。
-- `#mode` はビルド時に記録し、実行時は `--gui` / `--cui` で上書き可。
+- `#mode` はビルド時に記録する。
   残りの引数はすべてスクリプト引数（`args()`）になる。
 - 相対パスの基準は exe のあるディレクトリ。
 - 生成 exe にさらに `build` しても多重連結にならない（入替え）。
@@ -1408,7 +1389,7 @@ end()
 | `pngsave(path [,id])` | 描画バッファをPNG保存します   | 指定バッファをPNGへ保存します     | GUI描画バッファがないためGUI用途の機能です |
 | `galpha(a)`           | 描画不透明度を設定します      | `0`～`255` の透明度を設定します | GUI描画は行われません             |
 | `paint(x,y)`          | flood-fillします     | 指定位置から塗りつぶします        | GUI描画は行われません             |
-| `font(size)` / `font(spec)` / `font(spec, size)` | フォントサイズ・書体を設定します | `8`～`64` ピクセルへ変更します。`spec` はフォントファイルのパスまたはシステムフォント名（例 `YuGothR.ttc`、`PlemolJP-Regular.ttf`。拡張子は省略可：`PlemolJP` で `PlemolJP-Regular.ttf` のように前方一致し、Regular体を優先）です | GUI描画がないためGUI用途の設定です |
+| `font(size)` / `font(spec)` / `font(spec, size)` | フォントサイズ・書体を設定します | `8`～`64` ピクセルへ変更します。`spec` はフォントファイルのパス・スクリプト脇やカレントディレクトリのファイル名・システムフォント名（例 `YuGothR.ttc`、`PlemolJP-Regular.ttf`。拡張子は省略可：`PlemolJP` で `PlemolJP-Regular.ttf` のように前方一致し、Regular体を優先）です | GUI描画がないためGUI用途の設定です |
 
 `galpha()` の透明度は図形・転送に適用されます。
 
@@ -1925,7 +1906,7 @@ Windows では游ゴシック・メイリオ・Noto Sans JP など、macOS で�
 
 環境変数 `GOULASH_FONT` に `.ttf` / `.otf` / `.ttc` ファイルのパスを指定すると、そのフォントを優先します。
 
-`font(spec)` の名前解決順は、スクリプト脇→カレントディレクトリ→システムフォントです。Windows では `C:\Windows\Fonts` に加え、管理者権限なしインストール先の `%LOCALAPPDATA%\Microsoft\Windows\Fonts` も検索します。拡張子なしの指定は前方一致で探し（例 `PlemolJP`→`PlemolJP-Regular.ttf`）、Regular体を優先します。
+`font(spec)` の名前解決順は、スクリプト脇→カレントディレクトリ→システムフォントです。Windows では `C:\Windows\Fonts` に加え、管理者権限なしインストール先の `%LOCALAPPDATA%\Microsoft\Windows\Fonts` も検索します。スクリプト脇・カレントではファイル名そのまま・拡張子補完・前方一致の順で探すので、拡張子なしの指定もそのまま見つかります（例 `PlemolJP`→`PlemolJP-Regular.ttf`）。システムフォントでは拡張子なしの指定を前方一致で探し（同例）、Regular体を優先します。
 
 システムフォントが見つからない環境では、GUI バックエンドの生成時にエラーになります。
 
