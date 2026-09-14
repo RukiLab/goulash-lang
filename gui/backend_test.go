@@ -522,6 +522,70 @@ func TestTextRowTop(t *testing.T) {
 	}
 }
 
+// TestPrintNewlineSplit covers print() with embedded newlines: complete
+// lines become segments, only the trailing chunk stays partial.
+func TestPrintNewlineSplit(t *testing.T) {
+	b := mustNew(t)
+	b.Print("a\nb\nc", 0)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.segs) != 2 || b.segs[0].s != "a" || b.segs[0].y != 0 || b.segs[1].s != "b" || b.segs[1].y != 1 {
+		t.Fatalf("segs: %+v", b.segs)
+	}
+	if b.partial != "c" || b.partX != 0 || b.curY != 2 || b.curX != 1 {
+		t.Fatalf("partial=%q partX=%d curY=%d curX=%d", b.partial, b.partX, b.curY, b.curX)
+	}
+}
+
+// TestPrintNewlineJoinsPartial checks print/print/mes composition across
+// an embedded newline.
+func TestPrintNewlineJoinsPartial(t *testing.T) {
+	b := mustNew(t)
+	b.Print("ab", 0)
+	b.Print("c\nd", 0)
+	b.Println("e", 0)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.segs) != 2 || b.segs[0].s != "abc" || b.segs[1].s != "de" || b.segs[1].y != 1 {
+		t.Fatalf("segs: %+v", b.segs)
+	}
+}
+
+// TestPrintTrailingNewline leaves a clean empty partial on the next row.
+func TestPrintTrailingNewline(t *testing.T) {
+	b := mustNew(t)
+	b.Print("a\n", 0)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.segs) != 1 || b.segs[0].s != "a" {
+		t.Fatalf("segs: %+v", b.segs)
+	}
+	if b.partial != "" || b.curY != 1 || b.curX != 0 {
+		t.Fatalf("partial=%q curY=%d curX=%d", b.partial, b.curY, b.curX)
+	}
+}
+
+// TestPrintNewlineStyleChange keeps per-fragment styles across the split.
+func TestPrintNewlineStyleChange(t *testing.T) {
+	b := mustNew(t)
+	b.Print("a", StyleBold)
+	b.Print("b\nc", 0)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.segs) != 2 {
+		t.Fatalf("segs: %+v", b.segs)
+	}
+	if b.segs[0].s != "a" || b.segs[0].st != StyleBold {
+		t.Fatalf("segs[0]: %+v", b.segs[0])
+	}
+	if b.segs[1].s != "b" || b.segs[1].st != 0 {
+		t.Fatalf("segs[1]: %+v", b.segs[1])
+	}
+	if b.partial != "c" || b.partSt != 0 {
+		t.Fatalf("partial=%q partSt=%v", b.partial, b.partSt)
+	}
+}
+
 func TestPrintStyles(t *testing.T) {
 	b := mustNew(t)
 	b.Println("a", StyleBold)

@@ -183,6 +183,7 @@ var parityCases = []string{
 	// 組込
 	"mes(length([1,2,3]))\nmes(len(\"abc\"))\n",
 	"mes()\n",
+	"print(\"a\\nb\")\nmes(\"c\")\n",
 	"end(3)\nmes(\"no\")\n",
 	"end()\n",
 	"let x = 1\nend(0)\n",

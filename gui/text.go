@@ -63,6 +63,9 @@ func (b *WindowBackend) Println(s string, st TextStyle) {
 
 // printLocked appends to the partial line, flushing first when the style
 // changes so mixed-style print() calls keep per-fragment styles.
+// Embedded newlines break lines like Println (only the text after the
+// last newline stays partial), so print("a\nb") behaves the same as
+// mes() across both backends.
 func (b *WindowBackend) printLocked(s string, st TextStyle) {
 	if b.partial == "" {
 		b.partX = b.curX
@@ -74,8 +77,25 @@ func (b *WindowBackend) printLocked(s string, st TextStyle) {
 		b.partFg = b.fg
 		b.partSt = st
 	}
-	b.partial += s
-	b.curX += len([]rune(s))
+	lines := strings.Split(b.partial+s, "\n")
+	if len(lines) == 1 {
+		b.partial = lines[0]
+		b.curX += len([]rune(s))
+		return
+	}
+	// First chunk completes the pending partial at its start cell.
+	b.segs = append(b.segs, textSeg{x: b.partX, y: b.curY, s: lines[0], fg: b.partFg, st: b.partSt})
+	for _, ln := range lines[1 : len(lines)-1] {
+		b.curY++
+		b.segs = append(b.segs, textSeg{x: 0, y: b.curY, s: ln, fg: b.fg, st: st})
+	}
+	b.curY++
+	// Trailing chunk stays partial on the fresh line.
+	b.partial = lines[len(lines)-1]
+	b.partX = 0
+	b.partFg = b.fg
+	b.partSt = st
+	b.curX = len([]rune(b.partial))
 }
 
 // flushPartialLocked moves the partial line into segs without advancing.

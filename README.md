@@ -44,7 +44,6 @@ gsh run examples/gui_hello.gsh --gui
 | `sample19.gsh` | 分岐・関数の作例 |
 | `define.gsh` | `#define`・`switch`・`lextokens` の作例 |
 | `falling.gsh` | 落ちものパズル（`#define` 使用例） |
-| `test.gsh` | 画像付きボタンの作例 |
 | `include_demo.gsh` | `#include` による分割例 |
 | `gui_hello.gsh` | 最小の GUI ウィンドウ |
 | `gui_draw.gsh` | 図形描画・画像転送・PNG 保存 |
