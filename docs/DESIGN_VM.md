@@ -1,4 +1,4 @@
-# Goulash v0.2 レジスタ型VM 設計書
+# Goulash v0.3 レジスタ型VM 設計書
 
 `interp.go`（ツリーウォーク）を正解（Ground Truth）とし、観測可能動作を
 1文字単位で維持したまま、実行系を「AST → バイトコード・コンパイラ +
@@ -154,7 +154,7 @@ REPDISP REPITMERR FORIPREP FORAPREP SAVEVAR FORILOOP FORALOOP
 PUTN PUTG POPLOOP FUNCDEF CKCALL CALLF CALLB CALLV RET
 BRKTOP CONTTOP RETTOP HALT`
 
-純粋演算は `interp.go` の関数（`add`/`arith`/`bitwise`/`shift`/`compare`/
+純粋演算は `runtime.go` の関数（`add`/`arith`/`bitwise`/`shift`/`compare`/
 `valuesEqual`/`applyBinary`/`setIndex`/`requireValue`/`requireBool`）を
 直接呼ぶか、検証済みの等価式でインライン化する（整数高速パス）。
 インライン化した分岐の文言・条件は `parity_test.go` で両系一致を検証する。
