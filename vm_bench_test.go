@@ -3,7 +3,7 @@
 // 目標：
 //   - 数値ホットループはループ1周あたり 0 allocs（実行回数 N を変えても
 //     1 実行の割当てが増えないことで検証）。
-//   - 再帰・ループともにツリーウォーク比 3 倍以上の高速化。
+//   - 再帰・ループとも単一バックエンド（VM）として正しく高速動作すること。
 package main
 
 import (
@@ -76,75 +76,6 @@ func vmAllocsPerRunT(t *testing.T, src string) float64 {
 	})
 }
 
-// TestVMSpeedup はツリーウォーク比の高速化を検証する。
-// 外れ値の影響を抑えるため各3回測定の中央値で比較する。
-func TestVMSpeedup(t *testing.T) {
-	if testing.Short() {
-		t.Skip("short mode")
-	}
-	treeDur := medDur(t, timeTree, benchFibSrc)
-	vmDur := medDur(t, timeVM, benchFibSrc)
-	t.Logf("fib(24): tree=%v vm=%v ratio=%.2fx", treeDur, vmDur, float64(treeDur)/float64(vmDur))
-	if vmDur*3 > treeDur {
-		t.Fatalf("insufficient speedup: vm=%v tree=%v (need 3x)", vmDur, treeDur)
-	}
-	loopTree := medDur(t, timeTree, benchLoopSrc)
-	loopVM := medDur(t, timeVM, benchLoopSrc)
-	t.Logf("loop(1e6): tree=%v vm=%v ratio=%.2fx", loopTree, loopVM, float64(loopTree)/float64(loopVM))
-	if loopVM*3 > loopTree {
-		t.Fatalf("insufficient loop speedup: vm=%v tree=%v (need 3x)", loopVM, loopTree)
-	}
-}
-
-func medDur(t *testing.T, fn func(*testing.T, string) time.Duration, src string) time.Duration {
-	t.Helper()
-	ds := []time.Duration{fn(t, src), fn(t, src), fn(t, src)}
-	if ds[0] > ds[1] {
-		ds[0], ds[1] = ds[1], ds[0]
-	}
-	if ds[1] > ds[2] {
-		ds[1], ds[2] = ds[2], ds[1]
-	}
-	if ds[0] > ds[1] {
-		ds[0], ds[1] = ds[1], ds[0]
-	}
-	return ds[1]
-}
-
-func timeTree(t *testing.T, src string) time.Duration {
-	t.Helper()
-	prog, err := Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	var buf bytes.Buffer
-	in := NewInterpWithIO(&buf, strings.NewReader(""))
-	start := time.Now()
-	if err := in.Run(prog); err != nil {
-		t.Fatalf("tree run: %v", err)
-	}
-	return time.Since(start)
-}
-
-func timeVM(t *testing.T, src string) time.Duration {
-	t.Helper()
-	prog, err := Parse(src)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
-	}
-	vprog, err := Compile(prog)
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
-	var buf bytes.Buffer
-	in := NewInterpWithIO(&buf, strings.NewReader(""))
-	start := time.Now()
-	if err := newVmachine(in).runMain(vprog); err != nil {
-		t.Fatalf("vm run: %v", err)
-	}
-	return time.Since(start)
-}
-
 // TestVMRepIncClosedForm は単一加算ループの閉形最適化を検証する。
 // 1000万回の反復が一括適用で完結すること（値の正確さ＋余裕ある時間内）。
 func TestVMRepIncClosedForm(t *testing.T) {
@@ -174,18 +105,6 @@ func TestVMRepIncClosedForm(t *testing.T) {
 	t.Logf("10M-inc loop: %v", dur)
 }
 
-func BenchmarkTreeNumLoop(b *testing.B) {
-	prog := mustParseB(b, benchLoopSrc)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		var buf bytes.Buffer
-		in := NewInterpWithIO(&buf, strings.NewReader(""))
-		if err := in.Run(prog); err != nil {
-			b.Fatalf("tree run: %v", err)
-		}
-	}
-}
-
 func BenchmarkVMNumLoop(b *testing.B) {
 	prog := mustParseB(b, benchLoopSrc)
 	vprog, err := Compile(prog)
@@ -198,18 +117,6 @@ func BenchmarkVMNumLoop(b *testing.B) {
 		in := NewInterpWithIO(&buf, strings.NewReader(""))
 		if err := newVmachine(in).runMain(vprog); err != nil {
 			b.Fatalf("vm run: %v", err)
-		}
-	}
-}
-
-func BenchmarkTreeFib(b *testing.B) {
-	prog := mustParseB(b, benchFibSrc)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		var buf bytes.Buffer
-		in := NewInterpWithIO(&buf, strings.NewReader(""))
-		if err := in.Run(prog); err != nil {
-			b.Fatalf("tree run: %v", err)
 		}
 	}
 }

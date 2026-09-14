@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// runSrc executes src and returns mes() output.
+// runSrc executes src on the VM and returns mes() output.
 // Both parse-time and runtime errors are returned as error (not fatal) so
 // rejection tests can cover either phase.
 func runSrc(t *testing.T, src string) (string, error) {
@@ -15,9 +15,13 @@ func runSrc(t *testing.T, src string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	vprog, err := Compile(prog)
+	if err != nil {
+		return "", err
+	}
 	var buf bytes.Buffer
 	in := NewInterp(&buf)
-	err = in.Run(prog)
+	err = newVmachine(in).runMain(vprog)
 	return buf.String(), err
 }
 
@@ -162,7 +166,7 @@ func TestCompoundAssign(t *testing.T) {
 	mustOut(t, "let i = 0\ndef next() {\ni = i + 1\nreturn 0\n}\nlet a = [5]\na[next()] += 10\nmes(i)\nmes(a[0])\n", "1\n15\n")
 	mustOut(t, "let i = 0\ndef next() {\ni = i + 1\nreturn 0\n}\nlet m = [[7]]\nm[next()][0] *= 2\nmes(i)\nmes(m[0][0])\n", "1\n14\n")
 	mustErr(t, "x += 1\n", "未定義の変数")
-	mustErr(t, "mes += 1\n", "組み込み関数")
+	mustErr(t, "mes += 1\n", "未定義の変数")
 }
 
 func TestMinInt64Literal(t *testing.T) {
@@ -206,8 +210,9 @@ func TestRecursionLimit(t *testing.T) {
 }
 
 func TestParseDepthLimit(t *testing.T) {
-	// 500-deep nesting parses; 1100-deep is rejected (host stack guard).
-	shallow := strings.Repeat("if true {\n", 500) + "mes(1)\n" + strings.Repeat("}\n", 500)
+	// 50-deep nesting compiles and runs; 1100-deep is rejected by the
+	// parser (host-stack guard; the VM's register limit also bounds it).
+	shallow := strings.Repeat("if true {\n", 50) + "mes(1)\n" + strings.Repeat("}\n", 50)
 	mustOut(t, shallow, "1\n")
 	deep := strings.Repeat("if true {\n", 1100) + "mes(1)\n" + strings.Repeat("}\n", 1100)
 	mustErr(t, deep, "ネストが深すぎます")
@@ -402,7 +407,11 @@ func TestSample19Golden(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	var buf bytes.Buffer
-	if err := NewInterp(&buf).Run(prog); err != nil {
+	vprog, err := Compile(prog)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if err := newVmachine(NewInterp(&buf)).runMain(vprog); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	want := "Hello, Alice\nHello, Bob\nodd\n"

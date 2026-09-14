@@ -405,7 +405,7 @@ def fix_piece() {
 
 def finish_line_clear() {
     let cleared_count = 0
-    r = ROWS - 1
+    let r = ROWS - 1
     while r >= 0 {
         if clearing_lines[r] == 1 {
             cleared_count += 1

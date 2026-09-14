@@ -25,7 +25,11 @@ func runIO(t *testing.T, src, stdin string) (string, string, *Interp, error) {
 	var out, errout bytes.Buffer
 	in := NewInterpWithIO(&out, strings.NewReader(stdin))
 	in.errOut = &errout
-	err = in.Run(prog)
+	vprog, verr := Compile(prog)
+	if verr != nil {
+		return out.String(), errout.String(), in, verr
+	}
+	err = newVmachine(in).runMain(vprog)
 	return out.String(), errout.String(), in, err
 }
 
@@ -230,7 +234,14 @@ func TestSleepEndAssertLogmes(t *testing.T) {
 	}
 	conc := NewInterpWithIO(&bytes.Buffer{}, strings.NewReader(""))
 	done := make(chan error, 1)
-	go func() { done <- conc.Run(prog) }()
+	go func() {
+		vprog, verr := Compile(prog)
+		if verr != nil {
+			done <- verr
+			return
+		}
+		done <- newVmachine(conc).runMain(vprog)
+	}()
 	var runErr error
 	gotDone := false
 	for {
@@ -289,7 +300,11 @@ func TestArgs(t *testing.T) {
 	var out bytes.Buffer
 	in := NewInterpWithIO(&out, strings.NewReader(""))
 	in.SetArgs([]string{"--hard", "lv=3"})
-	if err := in.Run(prog); err != nil {
+	vprog, verr := Compile(prog)
+	if verr != nil {
+		t.Fatal(verr)
+	}
+	if err := newVmachine(in).runMain(vprog); err != nil {
 		t.Fatal(err)
 	}
 	if out.String() != "[--hard, lv=3]\nlv=3\n" {
@@ -460,7 +475,11 @@ func runScriptDir(t *testing.T, src, cwd, scriptDir string) string {
 	var out bytes.Buffer
 	in := NewInterpWithIO(&out, strings.NewReader(""))
 	in.SetScriptDir(scriptDir)
-	if err := in.Run(prog); err != nil {
+	vprog, verr := Compile(prog)
+	if verr != nil {
+		t.Fatalf("src %q: %v", src, verr)
+	}
+	if err := newVmachine(in).runMain(vprog); err != nil {
 		t.Fatalf("src %q: %v", src, err)
 	}
 	return out.String()

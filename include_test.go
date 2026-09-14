@@ -18,7 +18,11 @@ func runFile(t *testing.T, path string) (string, error) {
 	}
 	var buf bytes.Buffer
 	in := NewInterp(&buf)
-	err = in.Run(prog)
+	vprog, verr := Compile(prog)
+	if verr != nil {
+		return buf.String(), verr
+	}
+	err = newVmachine(in).runMain(vprog)
 	return buf.String(), err
 }
 
@@ -376,7 +380,11 @@ func runSrcPP(t *testing.T, src string) (string, error) {
 	}
 	var buf bytes.Buffer
 	in := NewInterp(&buf)
-	err = in.Run(prog)
+	vprog, verr := Compile(prog)
+	if verr != nil {
+		return buf.String(), verr
+	}
+	err = newVmachine(in).runMain(vprog)
 	return buf.String(), err
 }
 
@@ -401,7 +409,11 @@ func TestCombineSource(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	in := NewInterp(&buf)
-	if err := in.Run(prog); err != nil {
+	vprog, verr := Compile(prog)
+	if verr != nil {
+		t.Fatalf("compile: %v", verr)
+	}
+	if err := newVmachine(in).runMain(vprog); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	if buf.String() != "42\n" {

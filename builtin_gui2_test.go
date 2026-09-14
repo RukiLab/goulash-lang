@@ -32,7 +32,7 @@ func guiEval(t *testing.T, src string) (Value, error) {
 		t.Skipf("system font unavailable: %v", err)
 	}
 	in := NewInterpWithBackend(wb, strings.NewReader(""))
-	return in.EvalGlobal(es.X)
+	return newVmachine(in).evalOne(es.X, es.X.Pos())
 }
 
 func TestGuiBuiltinValidation(t *testing.T) {

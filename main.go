@@ -9,10 +9,7 @@
 //
 // --keep is accepted by `run` for forward compatibility (a future
 // transpiler backend may emit intermediate files) but is currently a no-op:
-// neither the tree-walk interpreter nor the VM generates intermediate files.
-//
-// GOULASH_BACKEND=vm selects the register-VM backend (default: tree).
-// The VM preserves all observable behavior of the tree-walk interpreter.
+// the VM generates no intermediate files.
 package main
 
 import (
@@ -29,30 +26,13 @@ import (
 // usage と REPL バナーはここから組み立てられます。
 const goulashVersion = "0.3"
 
-// useVM reports whether the register-VM backend is selected.
-// VM が既定。GOULASH_BACKEND=tree のときだけツリーウォークに戻る。
-func useVM() bool {
-	return os.Getenv("GOULASH_BACKEND") != "tree"
-}
-
-// runProgram executes prog on the selected backend.
+// runProgram executes prog on the register VM.
 func runProgram(in *Interp, prog *Program) error {
-	if useVM() {
-		vprog, err := Compile(prog)
-		if err != nil {
-			return err
-		}
-		return newVmachine(in).runMain(vprog)
+	vprog, err := Compile(prog)
+	if err != nil {
+		return err
 	}
-	return in.Run(prog)
-}
-
-// evalGlobalExpr evaluates a bare expression for REPL echo on either backend.
-func evalGlobalExpr(in *Interp, vm *vmachine, x Expr) (Value, error) {
-	if vm != nil {
-		return vm.evalOne(x, x.Pos())
-	}
-	return in.EvalGlobal(x)
+	return newVmachine(in).runMain(vprog)
 }
 
 var usage = `gsh: Goulash v` + goulashVersion + ` インタプリタ
@@ -66,7 +46,6 @@ var usage = `gsh: Goulash v` + goulashVersion + ` インタプリタ
   gsh build <file.gsh> [-o out.exe]     単一exeを生成します（バイトコード連結）
 
 既定はレジスタVMバックエンドです（コンパイルして実行）。
-環境変数 GOULASH_BACKEND=tree でツリーウォークに戻せます。
 GOULASH_TRACE=1 でVM命令トレースを標準エラー出力します。
 
 実行モードはコード内の #mode cli/gui で指定します（省略時は gui で
@@ -449,26 +428,20 @@ func cmdParse(args []string) {
 	fmt.Print(prog.String())
 }
 
-// runReplProg executes one REPL input on the selected backend.
+// runReplProg executes one REPL input on the VM.
 // The VM machine persists across inputs (globals/functions accumulate).
 func runReplProg(in *Interp, vm *vmachine, prog *Program) error {
-	if vm != nil {
-		vprog, err := Compile(prog)
-		if err != nil {
-			return err
-		}
-		return vm.runMain(vprog)
+	vprog, err := Compile(prog)
+	if err != nil {
+		return err
 	}
-	return in.Run(prog)
+	return vm.runMain(vprog)
 }
 
 func cmdRepl() {
 	fmt.Println("Goulash v" + goulashVersion + " REPL (type \"exit\" to quit)")
 	in := NewInterp(os.Stdout)
-	var replVM *vmachine
-	if useVM() {
-		replVM = newVmachine(in)
-	}
+	replVM := newVmachine(in)
 	// NOTE: the REPL reads through the interpreter Backend so input()
 	// shares the same stdin reader instead of competing with it.
 	var buf strings.Builder
@@ -517,7 +490,7 @@ func cmdRepl() {
 		// Bare expressions echo their value; everything else just runs.
 		if len(prog.Stmts) == 1 {
 			if es, ok := prog.Stmts[0].(*ExprStmt); ok {
-				v, err := evalGlobalExpr(in, replVM, es.X)
+				v, err := replVM.evalOne(es.X, es.X.Pos())
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "エラー:", err)
 				} else if v.K != KNull {
