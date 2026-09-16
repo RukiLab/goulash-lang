@@ -605,6 +605,186 @@ func TestPrintStyles(t *testing.T) {
 	}
 }
 
+// TestTextFrameBoundaryPublish locks the flicker fix: Draw only ever sees
+// the committed text snapshot. Closing a frame with await() (or sleep())
+// publishes it, so a cls() -> drawing -> mes() sequence in progress cannot
+// be observed halfway (that used to blank the text for one frame).
+//
+// Pixels are asserted through the snapshot because ebiten readback
+// (Image.At) panics before the game loop has started.
+func TestTextFrameBoundaryPublish(t *testing.T) {
+	b := mustNew(t)
+
+	// Frame 1: mes() then the frame boundary (await(0) publishes now).
+	b.Println("FRAME ONE", 0)
+	if got := committedText(b); len(got) != 0 {
+		t.Fatalf("text before the boundary is not committed yet: %q", got)
+	}
+	b.Await(0)
+	if got := committedText(b); len(got) != 1 || got[0] != "FRAME ONE" {
+		t.Fatalf("await() should publish the frame: %q", got)
+	}
+
+	// Frame 2 in progress: cls() wiped the working text, no yield yet.
+	// The committed frame must stay intact instead of blinking off.
+	b.Clear()
+	b.Println("FRAME TWO", 0)
+	if got := workingText(b); len(got) != 1 || got[0] != "FRAME TWO" {
+		t.Fatalf("working text = %q, want [FRAME TWO]", got)
+	}
+	if got := committedText(b); len(got) != 1 || got[0] != "FRAME ONE" {
+		t.Fatalf("in-progress frame leaked to Draw (text flicker): %q, want [FRAME ONE]", got)
+	}
+
+	// The next boundary publishes frame 2.
+	b.Await(0)
+	if got := committedText(b); len(got) != 1 || got[0] != "FRAME TWO" {
+		t.Fatalf("published frame = %q, want [FRAME TWO]", got)
+	}
+
+	// cls() alone must not blank the committed frame before the boundary.
+	b.Clear()
+	if got := committedText(b); len(got) != 1 || got[0] != "FRAME TWO" {
+		t.Fatalf("cls() blanked the committed frame before the boundary: %q", got)
+	}
+	b.Await(0)
+	if got := committedText(b); len(got) != 0 {
+		t.Fatalf("cleared frame = %q, want none", got)
+	}
+
+	// sleep() is a frame boundary too (print() partials included).
+	b.Print("AFTER SLEEP", 0)
+	b.Sleep(0)
+	if got := committedText(b); len(got) != 0 {
+		t.Fatalf("partial text lives on a seg after flush: %q", got)
+	}
+	b.mu.Lock()
+	partial := b.drawPartial
+	b.mu.Unlock()
+	if partial != "AFTER SLEEP" {
+		t.Fatalf("published partial = %q, want AFTER SLEEP", partial)
+	}
+}
+
+// TestTextPublishWithoutYield: a script that never awaits/sleeps has no
+// frame boundary, so Update keeps publishing (text must not be stuck).
+// Once the script has yielded, only yield points publish.
+func TestTextPublishWithoutYield(t *testing.T) {
+	b := mustNew(t)
+	b.Println("no await", 0)
+	if err := b.Update(); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got := committedText(b); len(got) != 1 || got[0] != "no await" {
+		t.Fatalf("Update should publish before the first yield: %q", got)
+	}
+	// After a yield, Update no longer publishes midway through a frame.
+	b.Await(0)
+	b.Println("later", 0)
+	if err := b.Update(); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if got := committedText(b); len(got) != 1 || got[0] != "no await" {
+		t.Fatalf("Update published after a yield: %q", got)
+	}
+	b.Await(0)
+	if got := committedText(b); len(got) != 2 || got[1] != "later" {
+		t.Fatalf("await should publish the next frame: %q", got)
+	}
+}
+
+// TestCanvasFrameBoundary locks the canvas flicker fix: after the first
+// yield, draw commands are staged in pending and flushed as one frame at
+// await()/sleep()/end, and Draw observes only the committed drawSel.
+// A cls()->draws sequence in progress must not blank the canvas for a frame.
+func TestCanvasFrameBoundary(t *testing.T) {
+	b := mustNew(t)
+	// No yield yet: enqueue goes straight to the game queue.
+	b.FillRect(0, 0, 10, 10, [4]int{255, 0, 0, 255})
+	b.mu.Lock()
+	if len(b.pending) != 0 || len(b.queue) != 1 {
+		b.mu.Unlock()
+		t.Fatalf("before yield: pending=%d queue=%d, want 0/1", len(b.pending), len(b.queue))
+	}
+	b.mu.Unlock()
+	b.drainQueue()
+	b.mu.Lock()
+	if len(b.queue) != 0 {
+		b.mu.Unlock()
+		t.Fatal("drainQueue should apply immediate commands")
+	}
+	b.mu.Unlock()
+	// First yield switches to staged mode.
+	b.Await(0)
+	b.FillRect(0, 0, 10, 10, [4]int{255, 0, 0, 255})
+	b.mu.Lock()
+	if len(b.pending) != 1 || len(b.queue) != 0 {
+		pend, q := len(b.pending), len(b.queue)
+		b.mu.Unlock()
+		t.Fatalf("after yield: pending=%d queue=%d, want 1/0", pend, q)
+	}
+	b.mu.Unlock()
+	// Update alone must not publish the staged frame.
+	if err := b.Update(); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	b.mu.Lock()
+	if len(b.pending) != 1 {
+		b.mu.Unlock()
+		t.Fatal("Update must not flush a staged frame")
+	}
+	b.mu.Unlock()
+	// The next boundary flushes it as one batch.
+	b.Await(0)
+	b.mu.Lock()
+	if len(b.pending) != 0 || len(b.queue) != 1 {
+		pend, q := len(b.pending), len(b.queue)
+		b.mu.Unlock()
+		t.Fatalf("after boundary: pending=%d queue=%d, want 0/1", pend, q)
+	}
+	b.mu.Unlock()
+	b.drainQueue()
+	// gsel() mid-frame must not switch the visible buffer until commit.
+	if err := b.SelectTarget(1); err != nil {
+		t.Fatalf("SelectTarget: %v", err)
+	}
+	b.mu.Lock()
+	if b.drawSel != 0 {
+		b.mu.Unlock()
+		t.Fatalf("gsel leaked to Draw before the boundary: drawSel=%d", b.drawSel)
+	}
+	b.mu.Unlock()
+	b.Await(0)
+	b.mu.Lock()
+	if b.drawSel != 1 {
+		b.mu.Unlock()
+		t.Fatalf("drawSel=%d, want 1 after boundary", b.drawSel)
+	}
+	b.mu.Unlock()
+}
+
+// committedText returns the text strings Draw would render.
+func committedText(b *WindowBackend) []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]string, 0, len(b.drawSegs))
+	for _, sg := range b.drawSegs {
+		out = append(out, sg.s)
+	}
+	return out
+}
+
+// workingText returns the script-side text lines (not yet published).
+func workingText(b *WindowBackend) []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := make([]string, 0, len(b.segs))
+	for _, sg := range b.segs {
+		out = append(out, sg.s)
+	}
+	return out
+}
+
 // TestWidgetRegistryHeadless drives AddButton with a manual pump
 // (no game loop): creation path is pure Go until Draw/Update run.
 func TestWidgetRegistryHeadless(t *testing.T) {
@@ -2176,5 +2356,48 @@ func TestGuiRender(t *testing.T) {
 	t.Logf("editor row=%d frames=%d distinct=%d", g.edRow, g.edFrames, g.edDistinct)
 	if g.edDistinct != 1 {
 		t.Fatalf("input() prompt flickers: %d distinct frames", g.edDistinct)
+	}
+}
+
+func TestIMEAnchorHeadless(t *testing.T) {
+	b := mustNew(t)
+	if _, _, ok := b.IMEAnchor(); ok {
+		t.Fatal("default anchor should be automatic (!ok)")
+	}
+	b.IMESetAnchor(123, 45)
+	x, y, ok := b.IMEAnchor()
+	if !ok || x != 123 || y != 45 {
+		t.Fatalf("IMEAnchor = %d,%d,%v, want 123,45,true", x, y, ok)
+	}
+	b.IMEClearAnchor()
+	if _, _, ok := b.IMEAnchor(); ok {
+		t.Fatal("after clear anchor should be automatic (!ok)")
+	}
+}
+
+func TestIMEBoundsPriority(t *testing.T) {
+	// Automatic caret wins over the (0,0) fallback.
+	got := imeBounds(false, 0, 0, true, 10.4, 20.6, 20)
+	want := image.Rect(10, 21, 11, 41)
+	if got != want {
+		t.Fatalf("caret bounds = %v, want %v", got, want)
+	}
+	// Manual imepos wins over the caret.
+	got = imeBounds(true, 123, 45, true, 10.4, 20.6, 20)
+	want = image.Rect(123, 45, 124, 65)
+	if got != want {
+		t.Fatalf("anchor bounds = %v, want %v", got, want)
+	}
+	// Manual imepos also wins with no focused editor.
+	got = imeBounds(true, 5, 6, false, 0, 0, 20)
+	want = image.Rect(5, 6, 6, 26)
+	if got != want {
+		t.Fatalf("anchor-only bounds = %v, want %v", got, want)
+	}
+	// Neither anchor nor caret: the (0,0) fallback.
+	got = imeBounds(false, 0, 0, false, 0, 0, 20)
+	want = image.Rect(0, 0, 1, 20)
+	if got != want {
+		t.Fatalf("fallback bounds = %v, want %v", got, want)
 	}
 }

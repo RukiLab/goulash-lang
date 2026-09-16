@@ -84,13 +84,22 @@ func (b *WindowBackend) ensureUI() {
 	root := widget.NewContainer(widget.ContainerOpts.Layout(fix))
 	b.fixLayout = fix
 	b.root = root
-	b.widgets = map[int]*widgetEntry{}
+	b.mu.Lock()
+	if b.widgets == nil {
+		b.widgets = map[int]*widgetEntry{}
+	}
+	b.mu.Unlock()
 	b.ui = &ebitenui.UI{Container: root}
 }
 
 // placeChild adds a child at an absolute rect on the game thread.
+// widgets マップは script goroutine と共有のため mu で保護する。
+// ebitenui 呼び出しはコールバックで mu を掴まないので、保持したまま
+// 行い原子性を保つ (途中状態を Pressed/selected 等が観測してちらつかない)。
 func (b *WindowBackend) placeChild(id int, e *widgetEntry, child widget.PreferredSizeLocateableWidget, x, y, w, h int) {
 	b.ensureUI()
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if old, ok := b.widgets[id]; ok {
 		old.remove()
 		delete(b.fixLayout.rects, old.child)
@@ -111,6 +120,8 @@ func (b *WindowBackend) placeChild(id int, e *widgetEntry, child widget.Preferre
 // ebitenui child), replacing any entry under id. Game thread only.
 func (b *WindowBackend) placeCustom(id int, e *widgetEntry) {
 	b.ensureUI()
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if old, ok := b.widgets[id]; ok {
 		old.remove()
 		if old.child != nil {
@@ -127,6 +138,8 @@ func (b *WindowBackend) placeCustom(id int, e *widgetEntry) {
 
 // removeWidgetLocked drops a widget; caller runs on the game thread.
 func (b *WindowBackend) removeWidgetLocked(id int) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	e, ok := b.widgets[id]
 	if !ok {
 		return fmt.Errorf("不明なウィジェット %d です", id)
@@ -166,10 +179,23 @@ func (b *WindowBackend) uiFace() *text.Face {
 
 func (b *WindowBackend) buttonImage() *widget.ButtonImage {
 	idle := nine(color.NRGBA{0x3A, 0x3F, 0x4A, 0xFF})
+	hover := nine(color.NRGBA{0x4A, 0x50, 0x5C, 0xFF})
+	pressed := nine(color.NRGBA{0x2A, 0x2E, 0x36, 0xFF})
+	// PressedHover/PressedDisabled を nil のままにすると、押下+ホバー時に
+	// ebitenui が nil NineSlice を描画して背景が透明に瞬く (ちらつき) ので
+	// 対応する通常状態で埋める。
 	return &widget.ButtonImage{
-		Idle: idle, Hover: nine(color.NRGBA{0x4A, 0x50, 0x5C, 0xFF}),
-		Pressed: nine(color.NRGBA{0x2A, 0x2E, 0x36, 0xFF}), Disabled: idle,
+		Idle: idle, Hover: hover,
+		Pressed: pressed, PressedHover: pressed, Disabled: idle, PressedDisabled: idle,
 	}
+}
+
+// buttonTextColor は全状態で不透明な文字色を返す。Idle のみ指定すると
+// Hover/Pressed 時に nil 色 (透明) が使われて文字が消えて見えるため。
+func buttonTextColor() *widget.ButtonTextColor {
+	white := color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}
+	grey := color.NRGBA{0x77, 0x77, 0x77, 0xFF}
+	return &widget.ButtonTextColor{Idle: white, Hover: white, Pressed: white, Disabled: grey}
 }
 
 func (b *WindowBackend) inputImage() *widget.TextInputImage {
@@ -328,7 +354,6 @@ func (b *WindowBackend) AddButton(id int, label string, x, y, w, h int, imgs ...
 				b.mu.Unlock()
 			}),
 		}
-		white := color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}
 		if len(imgs) > 0 && imgs[0] != 0 {
 			// Snapshot each state into button-sized images: Graphic
 			// centers its image, so a raw window-sized buffer would
@@ -376,20 +401,22 @@ func (b *WindowBackend) AddButton(id int, label string, x, y, w, h int, imgs ...
 				// (separate Text+Graphic opts leave it frozen).
 				opts = append(opts, widget.ButtonOpts.TextAndImage(label, face, &widget.GraphicImage{
 					Idle: idle, Hover: hover, Pressed: pressed, Disabled: disabled,
-				}, &widget.ButtonTextColor{Idle: white}))
+				}, buttonTextColor()))
 			} else {
 				// Icon-only: state faces fill the button exactly.
 				// (A Graphic row would add an empty-text member and
 				// shift the icon a few pixels off center.)
+				// PressedHover 等も埋めないと押下+ホバーで透明に瞬く。
+				niIdle, niHover := nineImage(idle), nineImage(hover)
+				niPressed, niDis := nineImage(pressed), nineImage(disabled)
 				opts = append(opts, widget.ButtonOpts.Image(&widget.ButtonImage{
-					Idle: nineImage(idle), Hover: nineImage(hover),
-					Pressed: nineImage(pressed), Disabled: nineImage(disabled),
+					Idle: niIdle, Hover: niHover,
+					Pressed: niPressed, PressedHover: niPressed,
+					Disabled: niDis, PressedDisabled: niDis,
 				}))
 			}
 		} else if label != "" {
-			opts = append(opts, widget.ButtonOpts.Text(label, face, &widget.ButtonTextColor{
-				Idle: white,
-			}))
+			opts = append(opts, widget.ButtonOpts.Text(label, face, buttonTextColor()))
 		}
 		b.placeChild(id, e, widget.NewButton(opts...), x, y, w, h)
 	})
@@ -591,7 +618,6 @@ func (b *WindowBackend) AddCombo(id, x, y, w, h int, items []string, sel int) er
 	}
 	b.runOnLoop(func() {
 		face := b.uiFace()
-		white := color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}
 		pressed := true
 		e := &widgetEntry{id: id, kind: wCombo, selIdx: -1}
 		e.items = append([]string(nil), items...)
@@ -604,7 +630,7 @@ func (b *WindowBackend) AddCombo(id, x, y, w, h int, items []string, sel int) er
 		cb := widget.NewListComboButton(
 			widget.ListComboButtonOpts.ButtonParams(&widget.ButtonParams{
 				Image:       b.buttonImage(),
-				TextColor:   &widget.ButtonTextColor{Idle: white},
+				TextColor:   buttonTextColor(),
 				TextPadding: widget.NewInsetsSimple(4),
 				TextFace:    face,
 			}),
@@ -622,7 +648,7 @@ func (b *WindowBackend) AddCombo(id, x, y, w, h int, items []string, sel int) er
 				// panics on open (Button.draw dereferences Image.Idle).
 				Slider: comboSliderParams(),
 			}),
-			widget.ListComboButtonOpts.Text(face, nil, &widget.ButtonTextColor{Idle: white}),
+			widget.ListComboButtonOpts.Text(face, nil, buttonTextColor()),
 			widget.ListComboButtonOpts.Entries(entries),
 			widget.ListComboButtonOpts.EntryLabelFunc(labelOf, labelOf),
 			widget.ListComboButtonOpts.EntrySelectedHandler(func(args *widget.ListComboButtonEntrySelectedEventArgs) {
@@ -701,10 +727,12 @@ func (b *WindowBackend) SetAreaText(id int, text string) error {
 	}
 	b.mu.Unlock()
 	b.runOnLoop(func() {
-		e.area.SetText(text)
 		b.mu.Lock()
-		e.cached = text
-		b.mu.Unlock()
+		defer b.mu.Unlock()
+		if cur, ok := b.widgets[id]; ok && cur.kind == wArea && cur.area != nil {
+			cur.area.SetText(text)
+			cur.cached = text
+		}
 	})
 	return nil
 }
@@ -720,6 +748,8 @@ func (b *WindowBackend) SetEnabled(id int, on bool) error {
 		return fmt.Errorf("objprm：不明なウィジェット %d です", id)
 	}
 	b.runOnLoop(func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
 		if e, ok := b.widgets[id]; ok {
 			e.disabled = !on
 			if e.child != nil {
@@ -748,7 +778,16 @@ func (b *WindowBackend) RemoveWidget(id int) error {
 // ClearWidgets drops all widgets.
 func (b *WindowBackend) ClearWidgets() {
 	b.runOnLoop(func() {
+		// removeWidgetLocked が都度ロックするため、イテレーション中の
+		// マップ直接走査は避け id をスナップショットしてから消す。
+		// (script 側 HasWidget/Pressed との並行走査でちらつき・競合が出ない)
+		b.mu.Lock()
+		ids := make([]int, 0, len(b.widgets))
 		for id := range b.widgets {
+			ids = append(ids, id)
+		}
+		b.mu.Unlock()
+		for _, id := range ids {
 			_ = b.removeWidgetLocked(id)
 		}
 	})
@@ -827,7 +866,7 @@ func (b *WindowBackend) Dialog(msg, mode string) (int, error) {
 			v := values[i]
 			btnRow.AddChild(widget.NewButton(
 				widget.ButtonOpts.Image(b.buttonImage()),
-				widget.ButtonOpts.Text(lab, face, &widget.ButtonTextColor{Idle: white}),
+				widget.ButtonOpts.Text(lab, face, buttonTextColor()),
 				widget.ButtonOpts.TextPadding(widget.NewInsetsSimple(6)),
 				widget.ButtonOpts.ClickedHandler(func(args *widget.ButtonClickedEventArgs) {
 					remove()

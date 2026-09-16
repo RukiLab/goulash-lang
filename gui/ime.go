@@ -28,36 +28,110 @@ func (b *WindowBackend) IMESet(on bool) int {
 		b.imeField.Focus()
 	} else {
 		b.imeField.Blur()
+		// Blur drops the in-conversion text: clear the mirror at once
+		// so imeget() reports "" immediately instead of a stale
+		// composition until the next pumpIME tick (which early-returns
+		// while unfocused and would never clear it).
+		b.mu.Lock()
+		b.imeComposing = ""
+		b.mu.Unlock()
 	}
 	return b.IMEState()
 }
 
 // IMEComposition returns the in-conversion (uncommitted) text.
 func (b *WindowBackend) IMEComposition() string {
+	if !b.imeField.IsFocused() {
+		return ""
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.imeComposing
 }
 
+// IMESetAnchor fixes the candidate-window anchor at (x, y) in window
+// pixels (same system as inputbox x/y). While set, pumpIME passes
+// this position to HandleInputWithBounds instead of the focused
+// inputbox caret. Script-thread safe.
+func (b *WindowBackend) IMESetAnchor(x, y int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.imeAnchorSet = true
+	b.imeAnchorX = x
+	b.imeAnchorY = y
+}
+
+// IMEClearAnchor drops the manual anchor: pumpIME falls back to the
+// focused inputbox caret (or (0,0) with no focused editor).
+// Script-thread safe.
+func (b *WindowBackend) IMEClearAnchor() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.imeAnchorSet = false
+}
+
+// IMEAnchor reports the manual anchor (x, y, true) or (0, 0, false)
+// when automatic caret-following is in effect. Script-thread safe.
+func (b *WindowBackend) IMEAnchor() (x, y int, ok bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.imeAnchorSet {
+		return 0, 0, false
+	}
+	return b.imeAnchorX, b.imeAnchorY, true
+}
+
+// imeBounds picks the candidate-window bounds for one pumpIME tick:
+// manual anchor wins, then the focused inputbox caret, then the
+// (0,0) fallback. h is the line height in pixels. Pure logic,
+// unit-testable.
+func imeBounds(anchorSet bool, ax, ay int, caretOk bool, cx, cy float64, h float64) image.Rectangle {
+	lh := int(h + 0.5)
+	bounds := image.Rect(0, 0, 1, lh)
+	if caretOk {
+		x := int(cx + 0.5)
+		y := int(cy + 0.5)
+		bounds = image.Rect(x, y, x+1, y+lh)
+	}
+	if anchorSet {
+		bounds = image.Rect(ax, ay, ax+1, ay+lh)
+	}
+	return bounds
+}
+
 // pumpIME advances the IME field; game thread only (called from Update).
 func (b *WindowBackend) pumpIME() {
 	if !b.imeField.IsFocused() {
+		// Unfocused means no composition (UncommittedTextLengthInBytes
+		// is 0 by definition): drop any stale mirror so imeget()
+		// reports "" once the unconfirmed string becomes empty,
+		// including blur/cancel paths that never reach the update below.
+		b.mu.Lock()
+		if b.imeComposing != "" {
+			b.imeComposing = ""
+		}
+		b.mu.Unlock()
 		return
 	}
-	// Anchor the composition/candidate window at the measured caret
-	// (cell math drifts on proportional fonts; the focused inputbox
-	// reports its own caret so candidates no longer pile at (0,0)).
+	// Anchor the composition/candidate window: manual imepos wins,
+	// then the measured caret (cell math drifts on proportional
+	// fonts; the focused inputbox reports its own caret so
+	// candidates no longer pile at (0,0)).
 	cx, cy, ok := b.caretPixels()
 	b.mu.Lock()
 	lh := b.lineH
+	anchorSet := b.imeAnchorSet
+	ax, ay := b.imeAnchorX, b.imeAnchorY
 	b.mu.Unlock()
-	bounds := image.Rect(0, 0, 1, int(lh+0.5))
-	if ok {
-		x := int(cx + 0.5)
-		y := int(cy + 0.5)
-		bounds = image.Rect(x, y, x+1, y+int(lh+0.5))
-	}
+	bounds := imeBounds(anchorSet, ax, ay, ok, cx, cy, lh)
 	if _, err := b.imeField.HandleInputWithBounds(bounds); err != nil {
+		// On error the composition is unusable: never leave a stale
+		// mirror behind for imeget().
+		b.mu.Lock()
+		if b.imeComposing != "" {
+			b.imeComposing = ""
+		}
+		b.mu.Unlock()
 		return
 	}
 	full := b.imeField.Text()
@@ -70,6 +144,11 @@ func (b *WindowBackend) pumpIME() {
 			comp = rendering[start : start+ulen]
 		}
 	}
+	// ebiten's Windows backend never reports an emptied composition
+	// (zero-length COMPSTR is dropped silently, cancel sends nothing),
+	// so comp can stay stale after the unconfirmed string becomes
+	// empty. The OS ground truth wins: empty means clear for imeget().
+	comp = reconcileComposition(comp)
 	b.mu.Lock()
 	// Mirror the field into the pending stream: typed text appends,
 	// in-field deletions (backspace etc.) truncate the stream tail.
@@ -92,6 +171,29 @@ func (b *WindowBackend) pumpIME() {
 		b.imePrev = ""
 	}
 	b.mu.Unlock()
+}
+
+// reconcileComposition prefers the OS ground truth over ebiten's
+// mirror: when ebiten still reports a composition but the OS-side
+// unconfirmed string is empty (0 chars), the composition became empty
+// and imeget() must report "". Unknown OS state keeps ebiten's value.
+// Pure logic, unit-testable (osLen is injected for tests).
+func reconcileComposition(ebitenComp string) string {
+	if ebitenComp == "" {
+		return ""
+	}
+	n, ok := osIMECompositionLen()
+	return reconcileCompositionLen(ebitenComp, n, ok)
+}
+
+// reconcileCompositionLen is reconcileComposition with an injectable
+// OS length (n==0 with ok means the unconfirmed string is empty).
+// Pure logic, unit-testable.
+func reconcileCompositionLen(ebitenComp string, n int, ok bool) string {
+	if ebitenComp != "" && ok && n == 0 {
+		return ""
+	}
+	return ebitenComp
 }
 
 // imeDiff splits new committed field text against the previous tick:

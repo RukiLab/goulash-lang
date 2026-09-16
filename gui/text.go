@@ -324,7 +324,11 @@ func (b *WindowBackend) MoveTo(x, y int) {
 }
 
 // Sleep pauses the script; the window keeps rendering.
+// Like await() it is a frame boundary: the text built so far is
+// published first, so the paused frame is complete (no half-drawn text
+// left over during the pause).
 func (b *WindowBackend) Sleep(ms int64) {
+	b.publishAtYieldLocked()
 	time.Sleep(time.Duration(ms) * time.Millisecond)
 }
 

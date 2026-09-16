@@ -75,8 +75,32 @@ type WindowBackend struct {
 	partSt  TextStyle // style at partial start
 	curX    int
 	curY    int
-	gx, gy  int // pixel cursor for graphics (gcopy destination)
-	fg      color.NRGBA
+	// draw* は Draw が読むコミット済みスナップショット。Draw は
+	// script 側の編集中状態 (segs/partial/curY/face...) を一切見ない。
+	// Print/Println/Clear/MoveTo は編集中状態だけを即時更新し、
+	// await()/sleep() (フレーム境界) で publishTextLocked が一括公開する。
+	// これで cls()->…描画…->mes() の途中を Draw が観測できず、
+	// 空テキストや旧テキストの1フレーム混入 (ちらつき) が出ない。
+	drawSegs    []textSeg
+	drawPartial string
+	drawPartX   int
+	drawPartFg  color.NRGBA
+	drawPartSt  TextStyle
+	drawCurY    int
+	drawFace    *text.GoTextFace
+	drawCharW   float64
+	drawLineH   float64
+	drawFontSz  float64
+	drawH       int
+	// yieldedOnce: the script has parked in await()/sleep() at least once.
+	// From then on the text snapshot is published only at yield points
+	// (await/sleep/end) instead of every Update, so a frame reaches the
+	// screen only after the script finished building it (see
+	// publishAtYieldLocked).
+	yieldedOnce bool
+
+	gx, gy int // pixel cursor for graphics (gcopy destination)
+	fg     color.NRGBA
 	// Font state (guarded by mu): face plus the cell metrics derived
 	// from it, so the mes/pos grid stays aligned at any size.
 	face     *text.GoTextFace
@@ -92,6 +116,15 @@ type WindowBackend struct {
 	sel     int                   // current draw target (guarded by mu)
 	blend   ebiten.CompositeMode
 	queue   []func()
+	// pending はフレーム構築中の canvas コマンド置き場。yieldedOnce 以後は
+	// enqueue がここへ溜め、await()/sleep()/end のフレーム境界で queue へ
+	// 一括移動する。これで cls() 直後の空 canvas や描きかけが1フレーム
+	// 表示される撕裂 (ちらつき) が出ない。await 前のスクリプトは高速に
+	// 全コマンドを積み、次の Update で原子的に適用される。
+	pending []func()
+	// drawSel は Draw が読む公開済み可視バッファ。gsel() の途中切替が
+	// そのまま画面に出て裏バッファの描きかけが見えるのを防ぐ。
+	drawSel int
 	// Input latch + audio (G2). Mouse buttons are indexed 0 left,
 	// 1 middle, 2 right (clicked() numbering).
 	mouseDown  [3]bool
@@ -118,6 +151,13 @@ type WindowBackend struct {
 	imePending string // committed text awaiting input()
 	// imeComposing is the uncommitted (conversion) text mirror.
 	imeComposing string
+	// imeAnchor is a manual candidate-window anchor (imepos; window
+	// pixels, same system as inputbox x/y). When set it wins over
+	// the focused inputbox caret in pumpIME; otherwise the caret
+	// (or the (0,0) fallback with no focused editor) is used.
+	imeAnchorSet bool
+	imeAnchorX   int
+	imeAnchorY   int
 	// Retained widgets (G3, game thread only except where noted).
 	ui        *ebitenui.UI
 	root      *widget.Container
@@ -132,7 +172,7 @@ func New(w, h int) (*WindowBackend, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &WindowBackend{
+	b := &WindowBackend{
 		w: w, h: h,
 		ctrlSt:   make([]ctrlState, len(ctrlKeys)),
 		fg:       color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF},
@@ -146,7 +186,12 @@ func New(w, h int) (*WindowBackend, error) {
 		// ensureTarget, so lazy init would panic on nil map.
 		targets: make(map[int]*ebiten.Image),
 		bufs:    make(map[int]bool),
-	}, nil
+	}
+	// 初期テキストも Draw に公開しておく (空スナップ)。
+	b.mu.Lock()
+	b.publishTextLocked()
+	b.mu.Unlock()
+	return b, nil
 }
 
 // RunLoop runs run() in a goroutine and the Ebiten loop on this thread.
@@ -163,17 +208,33 @@ func RunLoop(be *WindowBackend, run func()) int {
 }
 
 // SetDone marks natural script completion (window stays open).
+// The final frame is published so the finished output stays on screen.
 func (b *WindowBackend) SetDone() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.wantDone = true
+	b.publishTextLocked()
+	b.yieldedOnce = true
 }
 
 // RequestClose asks the game loop to terminate (end() builtin).
+// The last frame is published before the window goes away.
 func (b *WindowBackend) RequestClose() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.wantQuit = true
+	b.publishTextLocked()
+	b.yieldedOnce = true
+}
+
+// publishAtYieldLocked publishes the text snapshot at a script yield
+// point (await()/sleep()) and switches Update off from publishing.
+// Caller must NOT hold mu.
+func (b *WindowBackend) publishAtYieldLocked() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.publishTextLocked()
+	b.yieldedOnce = true
 }
 
 // Closed reports whether the loop should exit.
@@ -181,6 +242,41 @@ func (b *WindowBackend) Closed() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.wantQuit
+}
+
+// publishTextLocked copies the script-side text into the Draw snapshot.
+// Caller must hold mu.
+// Draw reads only the snapshot, so the working state of a cls()/mes()
+// sequence in progress is never rendered: a frame is committed either at
+// a script yield point (Await/Sleep, i.e. once the frame is complete) or
+// by Update while the script has not yielded yet.
+// Canvas も同時に確定する: pending の描画コマンドを queue へ一括移動し、
+// 可視バッファ sel を drawSel へ snapshot する。Draw は drawSel の完成
+// バッファだけを見るので、cls() 直後の空 canvas や gsel() 途中の裏面が
+// 1フレーム混入しない (GUI部品・図形のちらつき防止)。
+func (b *WindowBackend) publishTextLocked() {
+	if len(b.segs) == 0 {
+		b.drawSegs = nil
+	} else {
+		snap := make([]textSeg, len(b.segs))
+		copy(snap, b.segs)
+		b.drawSegs = snap
+	}
+	b.drawPartial = b.partial
+	b.drawPartX = b.partX
+	b.drawPartFg = b.partFg
+	b.drawPartSt = b.partSt
+	b.drawCurY = b.curY
+	b.drawFace = b.face
+	b.drawCharW = b.charW
+	b.drawLineH = b.lineH
+	b.drawFontSz = b.fontSize
+	b.drawH = b.h
+	if len(b.pending) > 0 {
+		b.queue = append(b.queue, b.pending...)
+		b.pending = nil
+	}
+	b.drawSel = b.sel
 }
 
 // advanceTick bumps the frame counter and wakes await() callers.
@@ -204,7 +300,12 @@ func (b *WindowBackend) Tick() int64 {
 
 // Await blocks until n frames pass. Must come from the script goroutine,
 // never the game thread (Update could not run to wake it).
+// The call is the frame boundary: the text built since the previous
+// await is published here, so Draw never observes a half-drawn frame
+// (cls() 直後や mes() 前の状態が画面に出るちらつきの防止).
+// await(0) therefore doubles as an explicit "show this frame now".
 func (b *WindowBackend) Await(n int64) {
+	b.publishAtYieldLocked()
 	if n <= 0 {
 		return
 	}
@@ -236,10 +337,34 @@ func (b *WindowBackend) Update() error {
 	b.pumpDrops()
 	b.pumpIME()
 	b.pumpInputs()
+	// Root は window 全面。リサイズ反映は Update 側で行い、Draw 中の
+	// SetLocation を避ける (Draw 中のレイアウト変更は ebitenui の描画を
+	// 1フレーム乱し、GUI部品のちらつき・ずれに見えるため)。
 	if b.ui != nil {
+		b.mu.Lock()
+		ww, hh := b.w, b.h
+		needReloc := b.root != nil && (b.uiW != ww || b.uiH != hh)
+		b.mu.Unlock()
+		if needReloc {
+			b.mu.Lock()
+			b.uiW, b.uiH = ww, hh
+			b.mu.Unlock()
+			b.root.SetLocation(image.Rect(0, 0, ww, hh))
+		}
+		if b.fixLayout != nil {
+			b.fixLayout.w, b.fixLayout.h = ww, hh
+		}
 		b.ui.Update()
 	}
 	b.syncWidgetCache()
+	// テキスト公開は原則ここでは行わない (Draw は公開済みスナップのみ読む)。
+	// await()/sleep() を一度も使わないスクリプトはフレーム境界が無いので、
+	// その場合だけ Update で公開して文字がいつまでも出ないのを防ぐ。
+	b.mu.Lock()
+	if !b.yieldedOnce {
+		b.publishTextLocked()
+	}
+	b.mu.Unlock()
 	b.advanceTick()
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -260,24 +385,36 @@ func textRowTop(cy, minY int, lineH float64) float64 {
 // Draw renders buffered text and widgets.
 func (b *WindowBackend) Draw(screen *ebiten.Image) {
 	screen.Fill(color.Black)
-	// Visible canvas: the currently selected buffer (0 = main).
+	// Visible canvas: the committed buffer (drawSel). gsel() の途中切替が
+	// そのまま出ると裏バッファの描きかけが1フレーム見えるため、frame 境界で
+	// 公開された面だけを描く。targets 自体は game thread のみが触る。
 	b.mu.Lock()
-	sel := b.sel
+	sel := b.drawSel
 	b.mu.Unlock()
 	if img := b.targets[sel]; img != nil {
 		screen.DrawImage(img, nil)
 	}
+	// テキストは公開済みスナップ (draw*) だけを読む。script 側で編集中の
+	// segs/partial/curY を直接読むと、cls() 直後の空状態や mes() 前の
+	// 途中状態が1フレーム見えてちらつく (フレーム撕裂) ため統一する。
+	// b.h の非ロック読みも同時に解消する。
 	b.mu.Lock()
-	segs := make([]textSeg, len(b.segs))
-	copy(segs, b.segs)
-	partial, partX, partFg, partSt := b.partial, b.partX, b.partFg, b.partSt
-	curY := b.curY
-	face := b.face
-	charW, lineH := b.charW, b.lineH
-	fontSize := b.fontSize
-	ascent := face.Metrics().HAscent
-	descent := face.Metrics().HDescent
+	segs := b.drawSegs
+	partial, partX, partFg, partSt := b.drawPartial, b.drawPartX, b.drawPartFg, b.drawPartSt
+	curY := b.drawCurY
+	face := b.drawFace
+	charW, lineH := b.drawCharW, b.drawLineH
+	fontSize := b.drawFontSz
+	winH := b.drawH
 	b.mu.Unlock()
+	// メトリクスが未公開ならテキストだけ省く (canvas と widgets は描く)。
+	ascent, descent := 0.0, 0.0
+	if face == nil || charW <= 0 || lineH <= 0 {
+		segs, partial = nil, ""
+	} else {
+		ascent = face.Metrics().HAscent
+		descent = face.Metrics().HDescent
+	}
 
 	// Faux-style tuning (single face deformed): bold over-strikes with a
 	// size-scaled shift, italic shears ~11 degrees, underline rules below
@@ -290,7 +427,10 @@ func (b *WindowBackend) Draw(screen *ebiten.Image) {
 	if fontSize >= 32 {
 		underThick = 2
 	}
-	rows := int(float64(b.h) / lineH)
+	rows := 0
+	if lineH > 0 {
+		rows = int(float64(winH) / lineH)
+	}
 	// Vertical scroll: drop lines above the visible window.
 	minY := 0
 	maxY := curY
@@ -335,17 +475,6 @@ func (b *WindowBackend) Draw(screen *ebiten.Image) {
 		drawText(partX, curY, partial, partFg, partSt)
 	}
 	if b.ui != nil {
-		// Root fills the window; relocate on resize.
-		b.mu.Lock()
-		ww, hh := b.w, b.h
-		b.mu.Unlock()
-		if b.root != nil && (b.uiW != ww || b.uiH != hh) {
-			b.uiW, b.uiH = ww, hh
-			b.root.SetLocation(image.Rect(0, 0, ww, hh))
-		}
-		if b.fixLayout != nil {
-			b.fixLayout.w, b.fixLayout.h = ww, hh
-		}
 		b.ui.Draw(screen)
 	}
 	b.drawInputs(screen)
@@ -353,5 +482,7 @@ func (b *WindowBackend) Draw(screen *ebiten.Image) {
 
 // Layout fixes the logical screen size.
 func (b *WindowBackend) Layout(outsideWidth, outsideHeight int) (int, int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return b.w, b.h
 }

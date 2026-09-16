@@ -214,10 +214,21 @@ func (b *WindowBackend) pumpInputs() {
 	pending := b.imePending
 	b.imePending = ""
 	b.mu.Unlock()
+	// ed は game thread の pumpInputs/drawInputs と script の InputText で
+	// 共有されるため、変異は mu 保持中に行う (保持なしの insert は
+	// Draw スナップショットと競合し、入力文字のちらつき・欠落になる)。
 	if imeOn {
-		ed.insert([]rune(pending))
+		if len(pending) > 0 {
+			b.mu.Lock()
+			ed.insert([]rune(pending))
+			b.mu.Unlock()
+		}
 	} else {
-		ed.insert(ebiten.AppendInputChars(nil))
+		if chars := ebiten.AppendInputChars(nil); len(chars) > 0 {
+			b.mu.Lock()
+			ed.insert(chars)
+			b.mu.Unlock()
+		}
 	}
 	// While converting, Enter/Escape belong to the IME (they commit
 	// or cancel the composition); otherwise they blur the box. While
@@ -232,6 +243,7 @@ func (b *WindowBackend) pumpInputs() {
 			// confirm: the entry is finished.
 			b.imePending = ""
 			b.imePrev = ""
+			b.imeComposing = ""
 			b.mu.Unlock()
 			b.imeField.SetTextAndSelection("", 0, 0)
 			b.imeField.Blur()
@@ -264,6 +276,7 @@ func (b *WindowBackend) pumpInputs() {
 // from Draw). Text is clipped to the box via a sub-image viewport.
 func (b *WindowBackend) drawInputs(screen *ebiten.Image) {
 	type snap struct {
+		id       int
 		st       inputState
 		disabled bool
 		face     *text.GoTextFace
@@ -274,11 +287,11 @@ func (b *WindowBackend) drawInputs(screen *ebiten.Image) {
 	}
 	b.mu.Lock()
 	var ss []snap
-	for _, e := range b.widgets {
+	for id, e := range b.widgets {
 		if e.kind != wInput || e.edit == nil {
 			continue
 		}
-		s := snap{st: *e.edit, disabled: e.disabled, face: b.face, comp: b.imeComposing, tick: b.tick}
+		s := snap{id: id, st: *e.edit, disabled: e.disabled, face: b.face, comp: b.imeComposing, tick: b.tick}
 		if b.face != nil {
 			s.ascent = b.face.Metrics().HAscent
 			s.lineH = b.lineH
@@ -289,6 +302,15 @@ func (b *WindowBackend) drawInputs(screen *ebiten.Image) {
 	for i := range ss {
 		drawInput(screen, &ss[i].st, ss[i].disabled, ss[i].face, ss[i].ascent, ss[i].comp, ss[i].tick)
 	}
+	// scroll は Draw で確定するが、コピーへの調整を捨てると毎フレーム
+	// 0 から再計算して行端で前後振動 (ちらつき) するため書き戻す。
+	b.mu.Lock()
+	for _, s := range ss {
+		if e, ok := b.widgets[s.id]; ok && e.edit != nil {
+			e.edit.scroll = s.st.scroll
+		}
+	}
+	b.mu.Unlock()
 }
 
 // drawInput paints one editor: frame, clipped text, caret, IME

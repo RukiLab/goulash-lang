@@ -131,6 +131,34 @@ func init() {
 		return Str(wb.IMEComposition()), nil
 	})
 
+	// imepos(x, y): fix the IME candidate-window anchor at window
+	// pixels (same system as inputbox x/y); it wins over the focused
+	// inputbox caret. imepos() with no args clears back to automatic
+	// caret-following (or the (0,0) fallback with no focused editor).
+	register("imepos", 0, 2, func(in *Interp, args []Value, at Pos) (Value, error) {
+		wb, err := guiBE(in, at, "imepos")
+		if err != nil {
+			return Null(), err
+		}
+		if len(args) == 0 {
+			wb.IMEClearAnchor()
+			return Null(), nil
+		}
+		if len(args) != 2 {
+			return Null(), argErr("imepos", 0, at, "imepos(x, y) または imepos()（自動に戻す）で指定してください")
+		}
+		x, err := needInt("imepos", args, 0, at)
+		if err != nil {
+			return Null(), err
+		}
+		y, err := needInt("imepos", args, 1, at)
+		if err != nil {
+			return Null(), err
+		}
+		wb.IMESetAnchor(int(x), int(y))
+		return Null(), nil
+	})
+
 	// listbox(id, x, y, w, h, items): place a list; items is an array.
 	register("listbox", 6, 6, func(in *Interp, args []Value, at Pos) (Value, error) {
 		wb, err := guiBE(in, at, "listbox")

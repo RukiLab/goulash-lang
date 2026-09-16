@@ -26,10 +26,17 @@ const maxBuffers = 16
 // goroutines), so scripts get a normal error instead.
 const MaxImageDim = 4096
 
-// enqueue adds a draw command for the next Update.
+// enqueue adds a draw command. Before the first yield it goes straight
+// to the game-thread queue (no frame boundary yet); afterwards it is
+// staged in pending and flushed as one frame at await()/sleep()/end so
+// Draw never observes a half-built canvas (cls 直後の空白1フレーム防止).
 func (b *WindowBackend) enqueue(cmd func()) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.yieldedOnce {
+		b.pending = append(b.pending, cmd)
+		return
+	}
 	b.queue = append(b.queue, cmd)
 }
 
@@ -45,12 +52,21 @@ func (b *WindowBackend) drainQueue() {
 }
 
 // runOnLoop runs fn on the game thread and waits (for picload upload).
+// Staged frame commands are flushed first so ordering is preserved:
+// e.g. drawing into buffer 1 then button(..., img=1) snapshots the new
+// pixels, and pget/pngsave read back the frame built so far.
 func (b *WindowBackend) runOnLoop(fn func()) {
 	done := make(chan struct{})
-	b.enqueue(func() {
+	b.mu.Lock()
+	if len(b.pending) > 0 {
+		b.queue = append(b.queue, b.pending...)
+		b.pending = nil
+	}
+	b.queue = append(b.queue, func() {
 		fn()
 		close(done)
 	})
+	b.mu.Unlock()
 	<-done
 }
 
@@ -61,7 +77,12 @@ func (b *WindowBackend) ensureTarget(id int) *ebiten.Image {
 	}
 	img, ok := b.targets[id]
 	if !ok || img == nil {
-		img = ebiten.NewImage(b.w, b.h)
+		// w/h は script の screen() が mu 下で書くため、game thread からは
+		// ロックして読む (ロックなし読みは競合し、確保サイズが撕裂く)。
+		b.mu.Lock()
+		w, h := b.w, b.h
+		b.mu.Unlock()
+		img = ebiten.NewImage(w, h)
 		b.targets[id] = img
 	}
 	return img
