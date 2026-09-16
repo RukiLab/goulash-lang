@@ -1,6 +1,6 @@
-# Goulash v0.2 レジスタ型VM 設計書
+# Goulash v0.3 レジスタ型VM 設計書
 
-`interp.go`（ツリーウォーク）を正解（Ground Truth）とし、観測可能動作を
+`runtime.go`（ツリーウォーク）を正解（Ground Truth）とし、観測可能動作を
 1文字単位で維持したまま、実行系を「AST → バイトコード・コンパイラ +
 レジスタ型VM」へ移行した記録である。
 
@@ -13,7 +13,7 @@ VM が既定（`GOULASH_BACKEND=tree` でツリーウォークに戻せる）。
 
 ---
 
-## 1. `interp.go` セマンティクス確認結果（§4 チェックリスト回答）
+## 1. `runtime.go` セマンティクス確認結果（§4 チェックリスト回答）
 
 ### 1.1 算術・演算エッジケース
 
@@ -22,7 +22,7 @@ VM が既定（`GOULASH_BACKEND=tree` でツリーウォークに戻せる）。
 - 0 除算：int・float とも `0 による除算です`（`arith`）。`%` の
   ゼロ剰余は `0 による剰余演算です`。
 - `abs(MinInt64)` のオーバーフロー、`sqrt` の負数、`exp`/`pow` の溢れ、
-  `float("nan"/"inf")`、範囲外の `int()` は `interp.go` の管轄外
+  `float("nan"/"inf")`、範囲外の `int()` は `runtime.go` の管轄外
   （`builtin_math.go`・値生成側で拒否）。VM は組込をそのまま呼ぶため
   自動的に一致する。
 
@@ -85,7 +85,7 @@ VM が既定（`GOULASH_BACKEND=tree` でツリーウォークに戻せる）。
 64bit 固定長：`[op:8][A:8][B:8][C:8][D:32]`。D は Bx（定数・名前・
 プロトタイプ・組込ID・個数）または sBx（`pc+1` 相対ジャンプ）。
 
-各命令は高々1つのソース位置を持つ。`interp.go` が複数位置を
+各命令は高々1つのソース位置を持つ。`runtime.go` が複数位置を
 使い分ける箇所は、コンパイラが検査命令を正しい位置で先行発行する
 ことで再現し、VM 側に副位置テーブルは持たない。
 
@@ -154,7 +154,7 @@ REPDISP REPITMERR FORIPREP FORAPREP SAVEVAR FORILOOP FORALOOP
 PUTN PUTG POPLOOP FUNCDEF CKCALL CALLF CALLB CALLV RET
 BRKTOP CONTTOP RETTOP HALT`
 
-純粋演算は `interp.go` の関数（`add`/`arith`/`bitwise`/`shift`/`compare`/
+純粋演算は `runtime.go` の関数（`add`/`arith`/`bitwise`/`shift`/`compare`/
 `valuesEqual`/`applyBinary`/`setIndex`/`requireValue`/`requireBool`）を
 直接呼ぶか、検証済みの等価式でインライン化する（整数高速パス）。
 インライン化した分岐の文言・条件は `parity_test.go` で両系一致を検証する。
