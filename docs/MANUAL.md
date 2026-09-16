@@ -1697,10 +1697,10 @@ file:line:col
 値を省略すると連番の整数定数になります。
 
 ```
-#define Color_Red
-#define Color_Green
-#define Color_Blue
-mes(Color_Green)  // 1
+#define COLOR_RED
+#define COLOR_GREEN
+#define COLOR_BLUE
+mes(COLOR_GREEN)  // 1
 ```
 
 * カウンタは `0` 開始で、無値形ごとに +1 されます。
