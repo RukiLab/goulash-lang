@@ -131,10 +131,26 @@ func init() {
 		return Str(wb.IMEComposition()), nil
 	})
 
+	// imeclause(): the target conversion clause (文節) with its rune
+	// offsets into the imeget() string: [text, rstart, rend].
+	// All zeros when unfocused, idle, or the platform reports no
+	// clause range. One call is one tick's snapshot, so same words
+	// stay distinguishable by position. GUI IME がない CUI では
+	// guiBE がエラーにします（imeget と同じ）。
+	register("imeclause", 0, 0, func(in *Interp, args []Value, at Pos) (Value, error) {
+		wb, err := guiBE(in, at, "imeclause")
+		if err != nil {
+			return Null(), err
+		}
+		text, rs, re := wb.IMEClause()
+		return ArrayOf([]Value{Str(text), Int(int64(rs)), Int(int64(re))}), nil
+	})
+
 	// imepos(x, y): fix the IME candidate-window anchor at window
 	// pixels (same system as inputbox x/y); it wins over the focused
 	// inputbox caret. imepos() with no args clears back to automatic
 	// caret-following (or the (0,0) fallback with no focused editor).
+	// CUI では guiBE がエラーにします（imeget と同じ）。
 	register("imepos", 0, 2, func(in *Interp, args []Value, at Pos) (Value, error) {
 		wb, err := guiBE(in, at, "imepos")
 		if err != nil {

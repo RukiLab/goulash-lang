@@ -130,6 +130,106 @@ func tokName(t TokenType) string {
 		return "入力の終端"
 	case TokNewline:
 		return "改行"
+	case TokSemicolon:
+		return "';'"
+	case TokIdent:
+		return "識別子"
+	case TokInt:
+		return "整数"
+	case TokFloat:
+		return "小数"
+	case TokString:
+		return "文字列"
+	case TokTrue:
+		return "'true'"
+	case TokFalse:
+		return "'false'"
+	case TokDef:
+		return "'def'"
+	case TokIf:
+		return "'if'"
+	case TokElse:
+		return "'else'"
+	case TokRepeat:
+		return "'repeat'"
+	case TokWhile:
+		return "'while'"
+	case TokSwitch:
+		return "'switch'"
+	case TokCase:
+		return "'case'"
+	case TokDefault:
+		return "'default'"
+	case TokAs:
+		return "'as'"
+	case TokBreak:
+		return "'break'"
+	case TokContinue:
+		return "'continue'"
+	case TokReturn:
+		return "'return'"
+	case TokLet:
+		return "'let'"
+	case TokPlus:
+		return "'+'"
+	case TokMinus:
+		return "'-'"
+	case TokStar:
+		return "'*'"
+	case TokSlash:
+		return "'/'"
+	case TokMod:
+		return "'%'"
+	case TokAssign:
+		return "'='"
+	case TokEq:
+		return "'=='"
+	case TokBang:
+		return "'!'"
+	case TokNotEq:
+		return "'!='"
+	case TokLt:
+		return "'<'"
+	case TokLtEq:
+		return "'<='"
+	case TokGt:
+		return "'>'"
+	case TokGtEq:
+		return "'>='"
+	case TokAnd:
+		return "'&&'"
+	case TokOr:
+		return "'||'"
+	case TokBitAnd:
+		return "'&'"
+	case TokBitOr:
+		return "'|'"
+	case TokBitXor:
+		return "'^'"
+	case TokBitNot:
+		return "'~'"
+	case TokShl:
+		return "'<<'"
+	case TokShr:
+		return "'>>'"
+	case TokComma:
+		return "','"
+	case TokColon:
+		return "':'"
+	case TokDot:
+		return "'.'"
+	case TokLParen:
+		return "'('"
+	case TokRParen:
+		return "')'"
+	case TokLBracket:
+		return "'['"
+	case TokRBracket:
+		return "']'"
+	case TokLBrace:
+		return "'{'"
+	case TokRBrace:
+		return "'}'"
 	}
 	if s, ok := opDisplay(t); ok {
 		return s
@@ -141,25 +241,25 @@ func tokName(t TokenType) string {
 func opDisplay(t TokenType) (string, bool) {
 	switch t {
 	case TokPlusAssign:
-		return "+=", true
+		return "'+='", true
 	case TokMinusAssign:
-		return "-=", true
+		return "'-='", true
 	case TokStarAssign:
-		return "*=", true
+		return "'*='", true
 	case TokSlashAssign:
-		return "/=", true
+		return "'/='", true
 	case TokModAssign:
-		return "%=", true
+		return "'%='", true
 	case TokBitAndAssign:
-		return "&=", true
+		return "'&='", true
 	case TokBitOrAssign:
-		return "|=", true
+		return "'|='", true
 	case TokBitXorAssign:
-		return "^=", true
+		return "'^='", true
 	case TokShlAssign:
-		return "<<=", true
+		return "'<<='", true
 	case TokShrAssign:
-		return ">>=", true
+		return "'>>='", true
 	}
 	return "", false
 }
@@ -957,9 +1057,14 @@ func describeToken(t Token) string {
 		return "改行"
 	case TokSemicolon:
 		return "';'（セミコロンは使用できません。改行を使用してください）"
-	}
-	if t.Type == TokIdent {
+	case TokIdent:
 		return fmt.Sprintf("識別子 %q", t.Lit)
+	case TokInt:
+		return fmt.Sprintf("整数 %q", t.Lit)
+	case TokFloat:
+		return fmt.Sprintf("小数 %q", t.Lit)
+	case TokString:
+		return fmt.Sprintf("文字列 %q", t.Lit)
 	}
-	return fmt.Sprintf("%s (%q)", string(t.Type), t.Lit)
+	return tokName(t.Type)
 }

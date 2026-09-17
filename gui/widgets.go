@@ -54,10 +54,25 @@ type widgetEntry struct {
 	remove widget.RemoveChildFunc
 	// disabled freezes interaction (objprm "enable"; guarded by mu).
 	disabled bool
+	// objprm "textcolor"/"backcolor" overrides (nil = theme default).
+	// Guarded by backend mu; applied on the game thread.
+	fg *color.NRGBA
+	bg *color.NRGBA
+	// geometry for rebuilds (list/combo/area re-create on recolor).
+	rx, ry, rw, rh int
 	// button latch + list state (guarded by backend mu).
 	pressed bool
 	items   []string
 	selIdx  int
+	// button creation params (label + image slots for recolor checks).
+	btnLabel  string
+	btnHasImg bool
+	btnImg    *widget.ButtonImage
+	btnTxt    *widget.ButtonTextColor
+	// checkbox creation params + live color objects.
+	chkLabel string
+	chkImg   *widget.CheckboxImage
+	chkLbl   *widget.LabelColor
 	// cached mirrors the widget's text, refreshed on the game thread
 	// every Update so InputText never blocks the script (a blocking
 	// read mid-frame would stall cls/mes redraws and flicker).
@@ -198,6 +213,73 @@ func buttonTextColor() *widget.ButtonTextColor {
 	return &widget.ButtonTextColor{Idle: white, Hover: white, Pressed: white, Disabled: grey}
 }
 
+// ---------- objprm textcolor/backcolor ----------
+
+// rgbToNRGBA converts a 0xRRGGBB script integer to an opaque color.
+func rgbToNRGBA(v int) color.NRGBA {
+	return color.NRGBA{uint8((v >> 16) & 0xFF), uint8((v >> 8) & 0xFF), uint8(v & 0xFF), 0xFF}
+}
+
+// nrgbaToRGB converts back (alpha is dropped, like pget).
+func nrgbaToRGB(c color.NRGBA) int {
+	return int(c.R)<<16 | int(c.G)<<8 | int(c.B)
+}
+
+func shiftChan(v uint8, d int) uint8 {
+	n := int(v) + d
+	if n < 0 {
+		n = 0
+	}
+	if n > 255 {
+		n = 255
+	}
+	return uint8(n)
+}
+
+func lighten(c color.NRGBA, d int) color.NRGBA {
+	return color.NRGBA{shiftChan(c.R, d), shiftChan(c.G, d), shiftChan(c.B, d), 0xFF}
+}
+
+func darken(c color.NRGBA, d int) color.NRGBA {
+	return lighten(c, -d)
+}
+
+// buttonImageFor builds button faces: theme default when bg is nil,
+// solid-color variants otherwise (hover/pressed derived).
+func buttonImageFor(bg *color.NRGBA) *widget.ButtonImage {
+	if bg == nil {
+		return (&WindowBackend{}).buttonImage()
+	}
+	// Method without backend: duplicate the default palette logic here
+	// to stay pure (tests) — same shades as buttonImage() when default.
+	idle := nine(*bg)
+	hover := nine(lighten(*bg, 16))
+	pressed := nine(darken(*bg, 16))
+	return &widget.ButtonImage{
+		Idle: idle, Hover: hover,
+		Pressed: pressed, PressedHover: pressed, Disabled: idle, PressedDisabled: idle,
+	}
+}
+
+// buttonTextColorFor builds text colors: theme default when fg is nil.
+func buttonTextColorFor(fg *color.NRGBA) *widget.ButtonTextColor {
+	if fg == nil {
+		return buttonTextColor()
+	}
+	grey := color.NRGBA{0x77, 0x77, 0x77, 0xFF}
+	return &widget.ButtonTextColor{Idle: *fg, Hover: *fg, Pressed: *fg, Disabled: grey}
+}
+
+// listEntryColorsFor builds list entry colors with custom fg.
+func listEntryColorsFor(fg *color.NRGBA) *widget.ListEntryColor {
+	base := listEntryColors()
+	if fg != nil {
+		base.Unselected = *fg
+		base.Selected = *fg
+	}
+	return base
+}
+
 func (b *WindowBackend) inputImage() *widget.TextInputImage {
 	idle := nine(color.NRGBA{0x22, 0x26, 0x2E, 0xFF})
 	return &widget.TextInputImage{Idle: idle, Disabled: idle}
@@ -208,6 +290,11 @@ func (b *WindowBackend) inputImage() *widget.TextInputImage {
 func (b *WindowBackend) checkBoxSize() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	return b.checkBoxSizeLocked()
+}
+
+// checkBoxSizeLocked is checkBoxSize without locking (caller holds mu).
+func (b *WindowBackend) checkBoxSizeLocked() int {
 	s := int(b.fontSize*1.25 + 0.5)
 	if s < 12 {
 		s = 12
@@ -282,7 +369,23 @@ func absf(v float64) float64 {
 // old faces rendered 0x0 (invisible box, label text only). Sized art
 // reassembles pixel-perfect at MinSize == size and fixes it.
 func (b *WindowBackend) checkImage() *widget.CheckboxImage {
-	s := b.checkBoxSize()
+	return b.checkImageFor(nil)
+}
+
+// checkImageFor builds checkbox faces with a custom box background.
+// bg == nil uses the theme default; otherwise both unchecked and
+// checked bodies use bg (hover/disabled derived), keeping the white
+// check glyph so the states stay distinct.
+func (b *WindowBackend) checkImageFor(bg *color.NRGBA) *widget.CheckboxImage {
+	return b.checkImageForSize(b.checkBoxSize(), bg)
+}
+
+// checkImageForLocked is checkImageFor without locking (caller holds mu).
+func (b *WindowBackend) checkImageForLocked(bg *color.NRGBA) *widget.CheckboxImage {
+	return b.checkImageForSize(b.checkBoxSizeLocked(), bg)
+}
+
+func (b *WindowBackend) checkImageForSize(s int, bg *color.NRGBA) *widget.CheckboxImage {
 	half := s / 2
 	mk := func(body color.NRGBA, check bool, mark color.NRGBA) *euimage.NineSlice {
 		return euimage.NewNineSliceSimple(checkArt(s, body, check, mark), half, 0)
@@ -292,6 +395,13 @@ func (b *WindowBackend) checkImage() *widget.CheckboxImage {
 	boxDis := color.NRGBA{0x1A, 0x1D, 0x24, 0xFF}
 	fill := color.NRGBA{0x2D, 0x4A, 0x7A, 0xFF}
 	fillHover := color.NRGBA{0x3A, 0x5C, 0x96, 0xFF}
+	if bg != nil {
+		box = *bg
+		boxHover = lighten(*bg, 16)
+		boxDis = darken(*bg, 12)
+		fill = *bg
+		fillHover = lighten(*bg, 16)
+	}
 	white := color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}
 	grey := color.NRGBA{0x77, 0x77, 0x77, 0xFF}
 	return &widget.CheckboxImage{
@@ -344,9 +454,15 @@ func (b *WindowBackend) AddButton(id int, label string, x, y, w, h int, imgs ...
 	var opErr error
 	b.runOnLoop(func() {
 		face := b.uiFace()
-		e := &widgetEntry{id: id, kind: wButton, selIdx: -1}
+		e := &widgetEntry{id: id, kind: wButton, selIdx: -1, rx: x, ry: y, rw: w, rh: h}
+		e.btnLabel = label
+		e.btnHasImg = len(imgs) > 0 && imgs[0] != 0 && label == ""
+		bi := b.buttonImage()
+		bt := buttonTextColor()
+		e.btnImg = bi
+		e.btnTxt = bt
 		opts := []widget.ButtonOpt{
-			widget.ButtonOpts.Image(b.buttonImage()),
+			widget.ButtonOpts.Image(bi),
 			widget.ButtonOpts.TextPadding(widget.NewInsetsSimple(4)),
 			widget.ButtonOpts.ClickedHandler(func(args *widget.ButtonClickedEventArgs) {
 				b.mu.Lock()
@@ -401,7 +517,7 @@ func (b *WindowBackend) AddButton(id int, label string, x, y, w, h int, imgs ...
 				// (separate Text+Graphic opts leave it frozen).
 				opts = append(opts, widget.ButtonOpts.TextAndImage(label, face, &widget.GraphicImage{
 					Idle: idle, Hover: hover, Pressed: pressed, Disabled: disabled,
-				}, buttonTextColor()))
+				}, bt))
 			} else {
 				// Icon-only: state faces fill the button exactly.
 				// (A Graphic row would add an empty-text member and
@@ -409,14 +525,13 @@ func (b *WindowBackend) AddButton(id int, label string, x, y, w, h int, imgs ...
 				// PressedHover 等も埋めないと押下+ホバーで透明に瞬く。
 				niIdle, niHover := nineImage(idle), nineImage(hover)
 				niPressed, niDis := nineImage(pressed), nineImage(disabled)
-				opts = append(opts, widget.ButtonOpts.Image(&widget.ButtonImage{
-					Idle: niIdle, Hover: niHover,
-					Pressed: niPressed, PressedHover: niPressed,
-					Disabled: niDis, PressedDisabled: niDis,
-				}))
+				bi.Idle, bi.Hover = niIdle, niHover
+				bi.Pressed, bi.PressedHover = niPressed, niPressed
+				bi.Disabled, bi.PressedDisabled = niDis, niDis
+				opts = append(opts, widget.ButtonOpts.Image(bi))
 			}
 		} else if label != "" {
-			opts = append(opts, widget.ButtonOpts.Text(label, face, buttonTextColor()))
+			opts = append(opts, widget.ButtonOpts.Text(label, face, bt))
 		}
 		b.placeChild(id, e, widget.NewButton(opts...), x, y, w, h)
 	})
@@ -487,47 +602,59 @@ func (b *WindowBackend) AddList(id, x, y, w, h int, items []string) error {
 	}
 	b.runOnLoop(func() {
 		face := b.uiFace()
-		e := &widgetEntry{id: id, kind: wList, selIdx: -1}
+		e := &widgetEntry{id: id, kind: wList, selIdx: -1, rx: x, ry: y, rw: w, rh: h}
 		e.items = append([]string(nil), items...)
-		list := widget.NewList(
-			widget.ListOpts.ContainerOpts(widget.ContainerOpts.BackgroundImage(
-				nine(color.NRGBA{0x1A, 0x1D, 0x24, 0xFF}))),
-			widget.ListOpts.ScrollContainerImage(&widget.ScrollContainerImage{
-				Idle: nine(color.NRGBA{0x1A, 0x1D, 0x24, 0xFF}),
-				Mask: nine(color.NRGBA{0x1A, 0x1D, 0x24, 0xFF}),
-			}),
-			widget.ListOpts.HideHorizontalSlider(),
-			widget.ListOpts.HideVerticalSlider(),
-			// Select on press (not release): native listboxes highlight
-			// the instant the button goes down; release-to-select
-			// feels like a laggy click.
-			widget.ListOpts.SelectPressed(),
-			widget.ListOpts.Entries(entries),
-			widget.ListOpts.EntryLabelFunc(func(en any) string {
-				if s, ok := en.(string); ok {
-					return s
-				}
-				return ""
-			}),
-			widget.ListOpts.EntryFontFace(face),
-			widget.ListOpts.EntryColor(listEntryColors()),
-			widget.ListOpts.EntryTextPadding(widget.NewInsetsSimple(2)),
-			widget.ListOpts.EntrySelectedHandler(func(args *widget.ListEntrySelectedEventArgs) {
-				b.mu.Lock()
-				e.selIdx = -1
-				for i, s := range e.items {
-					if s == args.Entry {
-						e.selIdx = i
-						break
-					}
-				}
-				b.mu.Unlock()
-			}),
-		)
+		list := b.newListWidget(face, e, entries)
 		b.placeChild(id, e, list, x, y, w, h)
 		e.list = list
 	})
 	return nil
+}
+
+// newListWidget builds a list honoring e.fg (entry text) and e.bg
+// (container background). Selection highlight stays theme blue so the
+// selection remains visible on any custom background.
+func (b *WindowBackend) newListWidget(face *text.Face, e *widgetEntry, entries []any) *widget.List {
+	bg := color.NRGBA{0x1A, 0x1D, 0x24, 0xFF}
+	if e.bg != nil {
+		bg = *e.bg
+	}
+	list := widget.NewList(
+		widget.ListOpts.ContainerOpts(widget.ContainerOpts.BackgroundImage(
+			nine(bg))),
+		widget.ListOpts.ScrollContainerImage(&widget.ScrollContainerImage{
+			Idle: nine(bg),
+			Mask: nine(bg),
+		}),
+		widget.ListOpts.HideHorizontalSlider(),
+		widget.ListOpts.HideVerticalSlider(),
+		// Select on press (not release): native listboxes highlight
+		// the instant the button goes down; release-to-select
+		// feels like a laggy click.
+		widget.ListOpts.SelectPressed(),
+		widget.ListOpts.Entries(entries),
+		widget.ListOpts.EntryLabelFunc(func(en any) string {
+			if s, ok := en.(string); ok {
+				return s
+			}
+			return ""
+		}),
+		widget.ListOpts.EntryFontFace(face),
+		widget.ListOpts.EntryColor(listEntryColorsFor(e.fg)),
+		widget.ListOpts.EntryTextPadding(widget.NewInsetsSimple(2)),
+		widget.ListOpts.EntrySelectedHandler(func(args *widget.ListEntrySelectedEventArgs) {
+			b.mu.Lock()
+			e.selIdx = -1
+			for i, s := range e.items {
+				if s == args.Entry {
+					e.selIdx = i
+					break
+				}
+			}
+			b.mu.Unlock()
+		}),
+	)
+	return list
 }
 
 // SelectedIndex returns the list/combo selection (-1 when none).
@@ -553,9 +680,11 @@ func (b *WindowBackend) AddCheck(id int, label string, x, y, w, h int, checked b
 		if checked {
 			init = widget.WidgetChecked
 		}
+		ci := b.checkImage()
+		lc := &widget.LabelColor{Idle: white, Disabled: grey}
 		cb := widget.NewCheckbox(
-			widget.CheckboxOpts.Image(b.checkImage()),
-			widget.CheckboxOpts.Text(label, face, &widget.LabelColor{Idle: white, Disabled: grey}),
+			widget.CheckboxOpts.Image(ci),
+			widget.CheckboxOpts.Text(label, face, lc),
 			widget.CheckboxOpts.Spacing(6),
 			widget.CheckboxOpts.InitialState(init),
 		)
@@ -570,7 +699,10 @@ func (b *WindowBackend) AddCheck(id int, label string, x, y, w, h int, checked b
 				h = ph
 			}
 		}
-		e := &widgetEntry{id: id, kind: wCheck, selIdx: -1, check: cb, checked: checked}
+		e := &widgetEntry{id: id, kind: wCheck, selIdx: -1, check: cb, checked: checked, rx: x, ry: y, rw: w, rh: h}
+		e.chkLabel = label
+		e.chkImg = ci
+		e.chkLbl = lc
 		b.placeChild(id, e, cb, x, y, w, h)
 	})
 	return nil
@@ -618,8 +750,7 @@ func (b *WindowBackend) AddCombo(id, x, y, w, h int, items []string, sel int) er
 	}
 	b.runOnLoop(func() {
 		face := b.uiFace()
-		pressed := true
-		e := &widgetEntry{id: id, kind: wCombo, selIdx: -1}
+		e := &widgetEntry{id: id, kind: wCombo, selIdx: -1, rx: x, ry: y, rw: w, rh: h}
 		e.items = append([]string(nil), items...)
 		labelOf := func(en any) string {
 			if s, ok := en.(string); ok {
@@ -627,43 +758,7 @@ func (b *WindowBackend) AddCombo(id, x, y, w, h int, items []string, sel int) er
 			}
 			return ""
 		}
-		cb := widget.NewListComboButton(
-			widget.ListComboButtonOpts.ButtonParams(&widget.ButtonParams{
-				Image:       b.buttonImage(),
-				TextColor:   buttonTextColor(),
-				TextPadding: widget.NewInsetsSimple(4),
-				TextFace:    face,
-			}),
-			widget.ListComboButtonOpts.ListParams(&widget.ListParams{
-				EntryFace:        face,
-				EntryColor:       listEntryColors(),
-				EntryTextPadding: widget.NewInsetsSimple(2),
-				SelectPressed:    &pressed,
-				ScrollContainerImage: &widget.ScrollContainerImage{
-					Idle: nine(color.NRGBA{0x1A, 0x1D, 0x24, 0xFF}),
-					Mask: nine(color.NRGBA{0x1A, 0x1D, 0x24, 0xFF}),
-				},
-				// The dropdown keeps its vertical slider: without images
-				// the slider handle button renders with a nil Image and
-				// panics on open (Button.draw dereferences Image.Idle).
-				Slider: comboSliderParams(),
-			}),
-			widget.ListComboButtonOpts.Text(face, nil, buttonTextColor()),
-			widget.ListComboButtonOpts.Entries(entries),
-			widget.ListComboButtonOpts.EntryLabelFunc(labelOf, labelOf),
-			widget.ListComboButtonOpts.EntrySelectedHandler(func(args *widget.ListComboButtonEntrySelectedEventArgs) {
-				b.mu.Lock()
-				e.selIdx = -1
-				for i, s := range e.items {
-					if s == args.Entry {
-						e.selIdx = i
-						break
-					}
-				}
-				b.mu.Unlock()
-			}),
-			widget.ListComboButtonOpts.MaxContentHeight(h*4),
-		)
+		cb := b.newComboWidget(face, e, entries, labelOf, h)
 		if sel >= 0 {
 			cb.SetSelectedEntry(entries[sel])
 			e.selIdx = sel
@@ -674,6 +769,53 @@ func (b *WindowBackend) AddCombo(id, x, y, w, h int, items []string, sel int) er
 	return nil
 }
 
+// newComboWidget builds a dropdown honoring e.fg (button + entry text)
+// and e.bg (button face + dropdown background).
+func (b *WindowBackend) newComboWidget(face *text.Face, e *widgetEntry, entries []any, labelOf func(any) string, h int) *widget.ListComboButton {
+	pressed := true
+	dropBG := color.NRGBA{0x1A, 0x1D, 0x24, 0xFF}
+	if e.bg != nil {
+		dropBG = *e.bg
+	}
+	return widget.NewListComboButton(
+		widget.ListComboButtonOpts.ButtonParams(&widget.ButtonParams{
+			Image:       buttonImageFor(e.bg),
+			TextColor:   buttonTextColorFor(e.fg),
+			TextPadding: widget.NewInsetsSimple(4),
+			TextFace:    face,
+		}),
+		widget.ListComboButtonOpts.ListParams(&widget.ListParams{
+			EntryFace:        face,
+			EntryColor:       listEntryColorsFor(e.fg),
+			EntryTextPadding: widget.NewInsetsSimple(2),
+			SelectPressed:    &pressed,
+			ScrollContainerImage: &widget.ScrollContainerImage{
+				Idle: nine(dropBG),
+				Mask: nine(dropBG),
+			},
+			// The dropdown keeps its vertical slider: without images
+			// the slider handle button renders with a nil Image and
+			// panics on open (Button.draw dereferences Image.Idle).
+			Slider: comboSliderParams(),
+		}),
+		widget.ListComboButtonOpts.Text(face, nil, buttonTextColorFor(e.fg)),
+		widget.ListComboButtonOpts.Entries(entries),
+		widget.ListComboButtonOpts.EntryLabelFunc(labelOf, labelOf),
+		widget.ListComboButtonOpts.EntrySelectedHandler(func(args *widget.ListComboButtonEntrySelectedEventArgs) {
+			b.mu.Lock()
+			e.selIdx = -1
+			for i, s := range e.items {
+				if s == args.Entry {
+					e.selIdx = i
+					break
+				}
+			}
+			b.mu.Unlock()
+		}),
+		widget.ListComboButtonOpts.MaxContentHeight(h*4),
+	)
+}
+
 // AddArea creates (or replaces) a multiline text box.
 func (b *WindowBackend) AddArea(id, x, y, w, h int, text string) error {
 	if w <= 0 || h <= 0 {
@@ -681,23 +823,40 @@ func (b *WindowBackend) AddArea(id, x, y, w, h int, text string) error {
 	}
 	b.runOnLoop(func() {
 		face := b.uiFace()
-		white := color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}
-		ta := widget.NewTextArea(
-			widget.TextAreaOpts.ContainerOpts(widget.ContainerOpts.BackgroundImage(
-				nine(color.NRGBA{0x22, 0x26, 0x2E, 0xFF}))),
-			widget.TextAreaOpts.ScrollContainerImage(&widget.ScrollContainerImage{
-				Idle: nine(color.NRGBA{0x1A, 0x1D, 0x24, 0xFF}),
-				Mask: nine(color.NRGBA{0x1A, 0x1D, 0x24, 0xFF}),
-			}),
-			widget.TextAreaOpts.FontFace(face),
-			widget.TextAreaOpts.FontColor(white),
-			widget.TextAreaOpts.TextPadding(*widget.NewInsetsSimple(4)),
-			widget.TextAreaOpts.Text(text),
-		)
-		e := &widgetEntry{id: id, kind: wArea, selIdx: -1, area: ta, cached: text}
+		e := &widgetEntry{id: id, kind: wArea, selIdx: -1, cached: text, rx: x, ry: y, rw: w, rh: h}
+		ta := b.newAreaWidget(face, e, text)
+		e.area = ta
 		b.placeChild(id, e, ta, x, y, w, h)
 	})
 	return nil
+}
+
+// newAreaWidget builds a multiline box honoring e.fg (text) and e.bg.
+func (b *WindowBackend) newAreaWidget(face *text.Face, e *widgetEntry, content string) *widget.TextArea {
+	fg := color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}
+	if e.fg != nil {
+		fg = *e.fg
+	}
+	bg := color.NRGBA{0x22, 0x26, 0x2E, 0xFF}
+	if e.bg != nil {
+		bg = *e.bg
+	}
+	scrollBG := color.NRGBA{0x1A, 0x1D, 0x24, 0xFF}
+	if e.bg != nil {
+		scrollBG = *e.bg
+	}
+	return widget.NewTextArea(
+		widget.TextAreaOpts.ContainerOpts(widget.ContainerOpts.BackgroundImage(
+			nine(bg))),
+		widget.TextAreaOpts.ScrollContainerImage(&widget.ScrollContainerImage{
+			Idle: nine(scrollBG),
+			Mask: nine(scrollBG),
+		}),
+		widget.TextAreaOpts.FontFace(face),
+		widget.TextAreaOpts.FontColor(fg),
+		widget.TextAreaOpts.TextPadding(*widget.NewInsetsSimple(4)),
+		widget.TextAreaOpts.Text(content),
+	)
 }
 
 // AreaText returns the multiline box content (script-thread safe,
@@ -758,6 +917,334 @@ func (b *WindowBackend) SetEnabled(id int, on bool) error {
 		}
 	})
 	return nil
+}
+
+// validWidgetRGB reports whether v is a 0xRRGGBB color or -1 (reset).
+func validWidgetRGB(v int) bool {
+	return v == -1 || (v >= 0 && v <= 0xFFFFFF)
+}
+
+// SetWidgetTextColor sets the text color (0xRRGGBB, -1 resets to theme).
+func (b *WindowBackend) SetWidgetTextColor(id int, rgb int) error {
+	if !validWidgetRGB(rgb) {
+		return fmt.Errorf("objprm：色は 0x000000〜0xFFFFFF または -1（既定に戻す）で指定してください。%d が指定されました", rgb)
+	}
+	b.mu.Lock()
+	e, ok := b.widgets[id]
+	if !ok {
+		b.mu.Unlock()
+		return fmt.Errorf("objprm：不明なウィジェット %d です", id)
+	}
+	kind := e.kind
+	if rgb == -1 {
+		e.fg = nil
+	} else {
+		c := rgbToNRGBA(rgb)
+		e.fg = &c
+	}
+	fg := e.fg
+	b.mu.Unlock()
+	var opErr error
+	b.runOnLoop(func() {
+		opErr = b.applyTextColorLocked(id, kind, fg)
+	})
+	return opErr
+}
+
+// SetWidgetBackColor sets the background color (0xRRGGBB, -1 resets).
+// Icon-only image buttons keep their artwork, so backcolor is rejected
+// for them (textcolor still applies to labeled buttons).
+func (b *WindowBackend) SetWidgetBackColor(id int, rgb int) error {
+	if !validWidgetRGB(rgb) {
+		return fmt.Errorf("objprm：色は 0x000000〜0xFFFFFF または -1（既定に戻す）で指定してください。%d が指定されました", rgb)
+	}
+	b.mu.Lock()
+	e, ok := b.widgets[id]
+	if !ok {
+		b.mu.Unlock()
+		return fmt.Errorf("objprm：不明なウィジェット %d です", id)
+	}
+	if e.kind == wButton && e.btnHasImg && rgb != -1 {
+		b.mu.Unlock()
+		return fmt.Errorf("objprm：画像ボタン（アイコンのみ）には backcolor は使えません")
+	}
+	kind := e.kind
+	if rgb == -1 {
+		e.bg = nil
+	} else {
+		c := rgbToNRGBA(rgb)
+		e.bg = &c
+	}
+	bg := e.bg
+	b.mu.Unlock()
+	var opErr error
+	b.runOnLoop(func() {
+		opErr = b.applyBackColorLocked(id, kind, bg)
+	})
+	return opErr
+}
+
+// applyTextColorLocked recolors text on the game thread.
+func (b *WindowBackend) applyTextColorLocked(id int, kind widgetKind, fg *color.NRGBA) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e, ok := b.widgets[id]
+	if !ok || e.kind != kind {
+		return fmt.Errorf("objprm：不明なウィジェット %d です", id)
+	}
+	// The stored override was already updated by the caller; fg mirrors it.
+	switch kind {
+	case wButton:
+		if e.btnTxt == nil {
+			return fmt.Errorf("objprm：不明なウィジェット %d です", id)
+		}
+		want := buttonTextColorFor(fg)
+		e.btnTxt.Idle, e.btnTxt.Hover, e.btnTxt.Pressed = want.Idle, want.Hover, want.Pressed
+		// Disabled stays grey so the enable state remains visible.
+	case wCheck:
+		if e.chkLbl != nil {
+			if fg == nil {
+				white := color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}
+				e.chkLbl.Idle = white
+			} else {
+				e.chkLbl.Idle = *fg
+			}
+		}
+		if e.check != nil {
+			if t := e.check.Text(); t != nil {
+				if fg == nil {
+					t.SetColor(color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF})
+				} else {
+					t.SetColor(*fg)
+				}
+			}
+		}
+	case wInput:
+		// Custom-drawn: drawInputs reads e.fg directly. Nothing to do.
+	case wList:
+		b.recolorListLocked(e)
+	case wCombo:
+		b.recolorComboLocked(e)
+	case wArea:
+		b.recolorAreaLocked(e)
+	default:
+		return fmt.Errorf("objprm：不明なウィジェット %d です", id)
+	}
+	return nil
+}
+
+// applyBackColorLocked recolors backgrounds on the game thread.
+func (b *WindowBackend) applyBackColorLocked(id int, kind widgetKind, bg *color.NRGBA) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e, ok := b.widgets[id]
+	if !ok || e.kind != kind {
+		return fmt.Errorf("objprm：不明なウィジェット %d です", id)
+	}
+	switch kind {
+	case wButton:
+		if e.btnImg == nil {
+			return fmt.Errorf("objprm：不明なウィジェット %d です", id)
+		}
+		if e.btnHasImg {
+			return fmt.Errorf("objprm：画像ボタン（アイコンのみ）には backcolor は使えません")
+		}
+		want := buttonImageFor(bg)
+		e.btnImg.Idle, e.btnImg.Hover = want.Idle, want.Hover
+		e.btnImg.Pressed, e.btnImg.PressedHover = want.Pressed, want.PressedHover
+		e.btnImg.Disabled, e.btnImg.PressedDisabled = want.Disabled, want.PressedDisabled
+	case wCheck:
+		if e.chkImg == nil {
+			return fmt.Errorf("objprm：不明なウィジェット %d です", id)
+		}
+		fresh := b.checkImageForLocked(bg)
+		e.chkImg.Unchecked, e.chkImg.UncheckedHovered, e.chkImg.UncheckedDisabled =
+			fresh.Unchecked, fresh.UncheckedHovered, fresh.UncheckedDisabled
+		e.chkImg.Checked, e.chkImg.CheckedHovered, e.chkImg.CheckedDisabled =
+			fresh.Checked, fresh.CheckedHovered, fresh.CheckedDisabled
+	case wInput:
+		// Custom-drawn: drawInputs reads e.bg directly. Nothing to do.
+	case wList:
+		b.recolorListLocked(e)
+	case wCombo:
+		b.recolorComboLocked(e)
+	case wArea:
+		b.recolorAreaLocked(e)
+	default:
+		return fmt.Errorf("objprm：不明なウィジェット %d です", id)
+	}
+	return nil
+}
+
+// recolorListLocked rebuilds a listbox with the current fg/bg.
+// Caller holds mu; placeChild locks internally, so release first via
+// snapshot + game-thread-safe rebuild (we are already on the loop,
+// but placeChild handles locking).
+func (b *WindowBackend) recolorListLocked(e *widgetEntry) {
+	// NOTE: caller holds mu. placeChild/newListWidget touch mu, so copy
+	// what we need, unlock, rebuild, and re-lock only via placeChild.
+	// To avoid deadlock we inline the rebuild without holding mu across
+	// placeChild: snapshot then call helpers that lock as needed.
+	// Since apply* already holds mu, use a deferred unlock dance:
+	// copy state, unlock, rebuild, relock is complex; instead rebuild
+	// directly here because newListWidget only reads e.fg/e.bg (stable)
+	// and placeChild re-locks safely only if we unlock first.
+	// Simplest correct path: unlock, rebuild, return (caller defers unlock
+	// — so we must not double-unlock). To keep it simple, rebuilds are
+	// queued via a helper that assumes mu is held and uses raw maps.
+	// Here we do the raw rebuild inline (no extra locking).
+	id, x, y, w, h := e.id, e.rx, e.ry, e.rw, e.rh
+	items := append([]string(nil), e.items...)
+	sel := e.selIdx
+	dis := e.disabled
+	face := func() *text.Face {
+		f := text.Face(b.face)
+		return &f
+	}()
+	entries := make([]any, len(items))
+	for i, s := range items {
+		entries[i] = s
+	}
+	if old, ok := b.widgets[id]; ok && old == e {
+		old.remove()
+		delete(b.fixLayout.rects, old.child)
+	} else if old, ok := b.widgets[id]; ok {
+		old.remove()
+		if old.child != nil {
+			delete(b.fixLayout.rects, old.child)
+		}
+	}
+	list := b.newListWidgetRaw(face, e, entries)
+	b.root.AddChild(list)
+	b.fixLayout.rects[list] = image.Rect(x, y, x+w, y+h)
+	e.child = list
+	e.list = list
+	e.remove = func() {
+		b.root.RemoveChild(list)
+		delete(b.fixLayout.rects, list)
+	}
+	b.widgets[id] = e
+	if sel >= 0 && sel < len(entries) {
+		list.SetSelectedEntry(entries[sel])
+		e.selIdx = sel
+	}
+	if dis && e.child != nil {
+		e.child.GetWidget().Disabled = true
+	}
+	b.root.RequestRelayout()
+}
+
+// newListWidgetRaw is newListWidget without the selection handler's
+// locking indirection (same behavior; handler locks as usual).
+func (b *WindowBackend) newListWidgetRaw(face *text.Face, e *widgetEntry, entries []any) *widget.List {
+	return b.newListWidget(face, e, entries)
+}
+
+// recolorComboLocked rebuilds a dropdown with the current fg/bg.
+func (b *WindowBackend) recolorComboLocked(e *widgetEntry) {
+	id, x, y, w, h := e.id, e.rx, e.ry, e.rw, e.rh
+	items := append([]string(nil), e.items...)
+	sel := e.selIdx
+	dis := e.disabled
+	face := func() *text.Face {
+		f := text.Face(b.face)
+		return &f
+	}()
+	entries := make([]any, len(items))
+	for i, s := range items {
+		entries[i] = s
+	}
+	labelOf := func(en any) string {
+		if s, ok := en.(string); ok {
+			return s
+		}
+		return ""
+	}
+	if old, ok := b.widgets[id]; ok {
+		old.remove()
+		if old.child != nil {
+			delete(b.fixLayout.rects, old.child)
+		} else {
+			delete(b.fixLayout.rects, old.child)
+		}
+	}
+	cb := b.newComboWidget(face, e, entries, labelOf, h)
+	if sel >= 0 && sel < len(entries) {
+		cb.SetSelectedEntry(entries[sel])
+		e.selIdx = sel
+	}
+	b.root.AddChild(cb)
+	b.fixLayout.rects[cb] = image.Rect(x, y, x+w, y+h)
+	e.child = cb
+	e.combo = cb
+	e.remove = func() {
+		b.root.RemoveChild(cb)
+		delete(b.fixLayout.rects, cb)
+	}
+	b.widgets[id] = e
+	if dis && e.child != nil {
+		e.child.GetWidget().Disabled = true
+	}
+	b.root.RequestRelayout()
+}
+
+// recolorAreaLocked rebuilds a mesbox with the current fg/bg.
+func (b *WindowBackend) recolorAreaLocked(e *widgetEntry) {
+	id, x, y, w, h := e.id, e.rx, e.ry, e.rw, e.rh
+	content := e.cached
+	dis := e.disabled
+	face := func() *text.Face {
+		f := text.Face(b.face)
+		return &f
+	}()
+	if old, ok := b.widgets[id]; ok {
+		old.remove()
+		if old.child != nil {
+			delete(b.fixLayout.rects, old.child)
+		}
+	}
+	ta := b.newAreaWidget(face, e, content)
+	b.root.AddChild(ta)
+	b.fixLayout.rects[ta] = image.Rect(x, y, x+w, y+h)
+	e.child = ta
+	e.area = ta
+	e.remove = func() {
+		b.root.RemoveChild(ta)
+		delete(b.fixLayout.rects, ta)
+	}
+	b.widgets[id] = e
+	if dis && e.child != nil {
+		e.child.GetWidget().Disabled = true
+	}
+	b.root.RequestRelayout()
+}
+
+// WidgetTextRGB reports the textcolor override (false when theme default).
+func (b *WindowBackend) WidgetTextRGB(id int) (int, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e, ok := b.widgets[id]
+	if !ok {
+		return 0, false, fmt.Errorf("objprm：不明なウィジェット %d です", id)
+	}
+	if e.fg == nil {
+		return 0, false, nil
+	}
+	return nrgbaToRGB(*e.fg), true, nil
+}
+
+// WidgetBackRGB reports the backcolor override (false when theme default).
+func (b *WindowBackend) WidgetBackRGB(id int) (int, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e, ok := b.widgets[id]
+	if !ok {
+		return 0, false, fmt.Errorf("objprm：不明なウィジェット %d です", id)
+	}
+	if e.bg == nil {
+		return 0, false, nil
+	}
+	return nrgbaToRGB(*e.bg), true, nil
 }
 
 // RemoveWidget drops one widget.

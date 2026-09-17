@@ -17,13 +17,13 @@ import (
 // anchors at the real caret (via caretPixels) instead of (0,0).
 //
 // Focus model: left-click focuses one box (blurring the rest);
-// clicking elsewhere blurs the box. The IME field itself is sticky:
-// it stays focused until ime(0) or box blur via Enter/Escape, so
-// conversion survives between keystrokes while polling input().
-// While a box is focused it owns the key stream: input() reports ""
-// and Update routes committed characters into the caret. Focusing a
-// box also focuses the IME field (conversion works out of the box).
-// ime(0) still force-disables conversion (the next focus re-enables).
+// clicking elsewhere blurs the box. The IME field follows box focus
+// so conversion works without an explicit ime(1) (game-thread only):
+// a fresh focus focuses the field, box defocus (click elsewhere,
+// Enter/Escape) blurs it. Focus is otherwise sticky: immediate-mode
+// scripts poll input() with no box focused, and an idle auto-blur
+// would kill conversion between keystrokes. ime(0) force-disables
+// conversion until ime(1) or the next box focus edge.
 
 // inputState is one editor. Guarded by backend mu; game-thread
 // mutated in pumpInputs, script-thread read in InputText.
@@ -158,21 +158,58 @@ func (b *WindowBackend) blurEditsLocked() {
 	}
 }
 
+// editFocusPlan is the IME-field decision for one pumpInputs press:
+// whether to focus/blur the field and whether the sticky ime(0)
+// disable must be cleared. Pure logic, unit-testable.
+type editFocusPlan struct {
+	focus  bool // focus the IME field (box focus, or re-enable after ime(0))
+	blur   bool // blur the IME field (clicked outside the focused box)
+	enable bool // clear the sticky ime(0) disable
+}
+
+// planEditFocus decides the IME field move for one press/observation.
+// press is a real press edge (not the latched clicked() level), hit
+// says the press landed inside an enabled inputbox, hadFocus says a
+// box was focused before the press, boxFocused says one is focused
+// now, fieldFocused/imeOff are the live IME field state. Pure logic,
+// unit-testable.
+//
+// Rules: a press inside a box focuses the field and re-enables
+// conversion after ime(0); a press outside blurs the field only when
+// a box was focused (the entry is finished) and ime(0) was not set;
+// with a box focused but the field not (any other blur) the field is
+// re-focused so conversion keeps working.
+func planEditFocus(press, hit, hadFocus, boxFocused, fieldFocused, imeOff bool) editFocusPlan {
+	if hit {
+		return editFocusPlan{focus: true, enable: true}
+	}
+	if boxFocused && !fieldFocused && !imeOff {
+		return editFocusPlan{focus: true}
+	}
+	if press && !hit && hadFocus && fieldFocused && !imeOff {
+		return editFocusPlan{blur: true}
+	}
+	return editFocusPlan{}
+}
+
 // pumpInputs handles focus and editing on the game thread (called
 // from Update after pumpIME). Clicks are observed, not consumed.
 func (b *WindowBackend) pumpInputs() {
 	x, y := ebiten.CursorPosition()
-	clicked := false
-	b.mu.Lock()
-	if b.clickFlag[0] {
-		clicked = true
-	}
-	b.mu.Unlock()
+	// Press edge, not the latched clicked() flag: clickFlag stays set
+	// until the script consumes it, so a latched level would blur a
+	// box (and the IME field) on later frames while the mouse sits
+	// outside, and would re-enable conversion right after ime(0).
+	// The edge lasts for the Update that observed the press, which
+	// always runs, so no click is missed even if the script consumes
+	// clicked() in between.
+	press := inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft)
 
 	b.mu.Lock()
-	if b.widgets != nil && clicked {
+	hadFocus := b.focusedLocked() != nil
+	hit := false
+	if b.widgets != nil && press {
 		pt := image.Pt(x, y)
-		hit := false
 		for _, e := range b.widgets {
 			if e.kind != wInput || e.edit == nil || e.disabled {
 				continue
@@ -192,15 +229,33 @@ func (b *WindowBackend) pumpInputs() {
 		}
 	}
 	ed := b.focusedLocked()
+	plan := planEditFocus(press, hit, hadFocus, ed != nil, b.imeField.IsFocused(), b.imeOff)
+	if plan.enable {
+		b.imeOff = false
+	}
 	b.mu.Unlock()
+	if plan.focus {
+		b.imeField.Focus()
+	} else if plan.blur {
+		// Clicked outside any box: the entry is finished. A
+		// conversion in flight is dropped with the blur (matches
+		// the Enter/Escape path below); sticky ime(0) keeps the
+		// field blurred without touching mirrors.
+		b.mu.Lock()
+		b.imePending = ""
+		b.imePrev = ""
+		b.imeComposing = ""
+		b.imeClause = ""
+		b.imeClauseStart, b.imeClauseEnd = 0, 0
+		b.mu.Unlock()
+		b.imeField.SetTextAndSelection("", 0, 0)
+		b.imeField.Blur()
+	}
 
-	// The IME field follows box focus so conversion works without
-	// an explicit ime(1) (game-thread only). Focus is otherwise
-	// sticky: immediate-mode scripts poll input() with no box
-	// focused, and an idle auto-blur would kill conversion between
-	// keystrokes. Blur only via ime(0) or box defocus. Without a
-	// focused box the candidate window falls back to the origin
-	// (there is no caret to anchor it to).
+	// While a box is focused it owns the key stream: input() reports
+	// "" and Update routes committed characters into the caret.
+	// Without a focused box the candidate window falls back to the
+	// origin (there is no caret to anchor it to).
 
 	if ed == nil {
 		return
@@ -244,6 +299,8 @@ func (b *WindowBackend) pumpInputs() {
 			b.imePending = ""
 			b.imePrev = ""
 			b.imeComposing = ""
+			b.imeClause = ""
+			b.imeClauseStart, b.imeClauseEnd = 0, 0
 			b.mu.Unlock()
 			b.imeField.SetTextAndSelection("", 0, 0)
 			b.imeField.Blur()
@@ -279,6 +336,8 @@ func (b *WindowBackend) drawInputs(screen *ebiten.Image) {
 		id       int
 		st       inputState
 		disabled bool
+		fg       *color.NRGBA
+		bg       *color.NRGBA
 		face     *text.GoTextFace
 		ascent   float64
 		lineH    float64
@@ -292,6 +351,14 @@ func (b *WindowBackend) drawInputs(screen *ebiten.Image) {
 			continue
 		}
 		s := snap{id: id, st: *e.edit, disabled: e.disabled, face: b.face, comp: b.imeComposing, tick: b.tick}
+		if e.fg != nil {
+			c := *e.fg
+			s.fg = &c
+		}
+		if e.bg != nil {
+			c := *e.bg
+			s.bg = &c
+		}
 		if b.face != nil {
 			s.ascent = b.face.Metrics().HAscent
 			s.lineH = b.lineH
@@ -300,7 +367,7 @@ func (b *WindowBackend) drawInputs(screen *ebiten.Image) {
 	}
 	b.mu.Unlock()
 	for i := range ss {
-		drawInput(screen, &ss[i].st, ss[i].disabled, ss[i].face, ss[i].ascent, ss[i].comp, ss[i].tick)
+		drawInput(screen, &ss[i].st, ss[i].disabled, ss[i].fg, ss[i].bg, ss[i].face, ss[i].ascent, ss[i].comp, ss[i].tick)
 	}
 	// scroll は Draw で確定するが、コピーへの調整を捨てると毎フレーム
 	// 0 から再計算して行端で前後振動 (ちらつき) するため書き戻す。
@@ -315,9 +382,12 @@ func (b *WindowBackend) drawInputs(screen *ebiten.Image) {
 
 // drawInput paints one editor: frame, clipped text, caret, IME
 // composition. Pure drawing (no backend), unit-testable where noted.
-func drawInput(screen *ebiten.Image, st *inputState, disabled bool, face *text.GoTextFace, ascent float64, comp string, tick int64) {
+func drawInput(screen *ebiten.Image, st *inputState, disabled bool, fgOvr, bgOvr *color.NRGBA, face *text.GoTextFace, ascent float64, comp string, tick int64) {
 	r := st.rect
 	bg := color.NRGBA{0x22, 0x26, 0x2E, 0xFF}
+	if bgOvr != nil {
+		bg = *bgOvr
+	}
 	frame := color.NRGBA{0x55, 0x5B, 0x68, 0xFF}
 	if st.focused {
 		frame = color.NRGBA{0x6A, 0x9A, 0xE8, 0xFF}
@@ -358,6 +428,9 @@ func drawInput(screen *ebiten.Image, st *inputState, disabled bool, face *text.G
 		return
 	}
 	fg := color.NRGBA{0xFF, 0xFF, 0xFF, 0xFF}
+	if fgOvr != nil {
+		fg = *fgOvr
+	}
 	if disabled {
 		fg = color.NRGBA{0x77, 0x77, 0x77, 0xFF}
 	}

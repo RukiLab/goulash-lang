@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"gsh/gui"
@@ -384,6 +385,46 @@ func TestExec(t *testing.T) {
 	mustErrIO(t, "mes(exec(\"no-such-command-xyz\"))\n", "exec：")
 }
 
+// TestChildOutWriters locks the child-output guard: a real *os.File
+// passes through (the child inherits the handle, no copy goroutine), an
+// in-process writer is wrapped so os/exec's copy goroutine cannot race
+// the interpreter's own writes. exec/pipeexec hand the interpreter's
+// output to a child, and an unwrapped bytes.Buffer lost whole writes
+// under that race (TestExec flaked about 10% of runs).
+func TestChildOutWriters(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if got := childOut(f); got != io.Writer(f) {
+		t.Fatalf("childOut(*os.File) = %T, want the file itself", got)
+	}
+	var buf bytes.Buffer
+	w := childOut(&buf)
+	if _, ok := w.(*syncWriter); !ok {
+		t.Fatalf("childOut(*bytes.Buffer) = %T, want *syncWriter", w)
+	}
+	const goroutines, per = 8, 200
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < per; j++ {
+				if _, err := w.Write([]byte("x")); err != nil {
+					t.Errorf("write: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if buf.Len() != goroutines*per {
+		t.Fatalf("lost writes: len = %d, want %d", buf.Len(), goroutines*per)
+	}
+}
+
 func TestPipeexec(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		mustOutIO(t, "mes(pipeexec(\"cmd\", \"/c\", \"echo\", \"hi\"))\n", "", "hi\r\n\n")
@@ -411,6 +452,7 @@ func TestConsoleIO(t *testing.T) {
 	mustOutIO(t, "cls()\n", "", "\x1b[2J\x1b[H")
 	mustOutIO(t, "color(255, 0, 0)\ncolor()\n", "", "\x1b[38;2;255;0;0m\x1b[0m")
 	mustOutIO(t, "color(255, 0, 0, 128)\ncolor()\n", "", "\x1b[38;2;255;0;0m\x1b[0m")
+	mustOutIO(t, "color(0xFF0000)\ncolor()\n", "", "\x1b[38;2;255;0;0m\x1b[0m")
 	mustOutIO(t, "pos(3, 4)\n", "", "\x1b[5;4H")
 	mustOutIO(t, "pos(-1, 0)\n", "", "\x1b[1;0H")
 	mustOutIO(t, "pos(-5, -3)\n", "", "\x1b[-2;-4H")
@@ -420,8 +462,10 @@ func TestConsoleIO(t *testing.T) {
 	mustOutIO(t, "title(\"T\")\n", "", "\x1b]0;T\x07")
 	mustErrIO(t, "title(\"a\\0b\")\n", "NUL")
 	mustOutIO(t, "print(\"x\", \"bold\")\nprint(\"y\")\n", "", "\x1b[1mx\x1b[22;23;24my")
-	mustErrIO(t, "color(1, 2)\n", "0 個、3 個または 4 個")
+	mustErrIO(t, "color(1, 2)\n", "0 個、1 個、3 個または 4 個")
 	mustErrIO(t, "color(300, 0, 0)\n", "0 から 255")
+	mustErrIO(t, "color(0x1000000)\n", "0x000000")
+	mustErrIO(t, "color(-1)\n", "0x000000")
 }
 
 func TestSplitStyleArgs(t *testing.T) {

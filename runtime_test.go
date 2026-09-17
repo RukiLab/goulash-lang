@@ -249,8 +249,8 @@ func TestLet(t *testing.T) {
 	// void initializer is rejected.
 	mustErr(t, "def v() {\nreturn\n}\nlet x = v()\n", "void値を使用できません")
 	// = and an expression are required.
-	mustErr(t, "let x\n", "\"ASSIGN\"")
-	mustErr(t, "let 1 = 2\n", "\"IDENT\"")
+	mustErr(t, "let x\n", "'='")
+	mustErr(t, "let 1 = 2\n", "識別子")
 }
 
 func TestRepeatArray(t *testing.T) {

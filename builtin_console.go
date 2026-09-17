@@ -28,7 +28,8 @@ func init() {
 		return Null(), nil
 	})
 
-	// cls(): clear the screen.
+	// cls(): clear the screen. GUIではキャンバス/テキストに加え
+	// ウィジェットもまとめて消去します (clrobj 相当)。
 	register("cls", 0, 0, func(in *Interp, args []Value, at Pos) (Value, error) {
 		in.be.Clear()
 		return Null(), nil
@@ -37,14 +38,26 @@ func init() {
 	// color(r, g, b [, a]): set text/draw color (0-255 each).
 	// a is the alpha (0 transparent .. 255 opaque, default 255).
 	// Terminals cannot render text alpha, so CUI ignores it.
+	// color(rgb): set color with a 0xRRGGBB integer (pget()/objprm()形式).
 	// color() resets the color.
 	register("color", 0, 4, func(in *Interp, args []Value, at Pos) (Value, error) {
 		if len(args) == 0 {
 			in.be.ResetColor()
 			return Null(), nil
 		}
+		if len(args) == 1 {
+			v, err := needInt("color", args, 0, at)
+			if err != nil {
+				return Null(), err
+			}
+			if v < 0 || v > 0xFFFFFF {
+				return Null(), argErr("color", 0, at, "0x000000 から 0xFFFFFF の範囲で指定してください。%d が指定されました", v)
+			}
+			in.be.SetColor(int((v>>16)&0xFF), int((v>>8)&0xFF), int(v&0xFF), 255)
+			return Null(), nil
+		}
 		if len(args) != 3 && len(args) != 4 {
-			return Null(), rtErrf(at, "color は 0 個、3 個または 4 個の引数が必要ですが、%d 個が渡されました", len(args))
+			return Null(), rtErrf(at, "color は 0 個、1 個、3 個または 4 個の引数が必要ですが、%d 個が渡されました", len(args))
 		}
 		rgba := []int{0, 0, 0, 255}
 		for i := range args {

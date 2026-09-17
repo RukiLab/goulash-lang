@@ -1,0 +1,25 @@
+{
+  "name": "goulash-lang",
+  "version": "1.0.0",
+  "description": "> **テスト段階に関する注意:**   > Goulash はテスト段階です。そのため、予告なく破壊的変更が行われる可能性があります。   > 仕様・文法・組み込み関数・CLI・GUI API などは変更される場合があります。   > 最新の変更内容は `CHANGELOG.md` を確認してください。",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "example": "examples"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RukiLab/goulash-lang.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/RukiLab/goulash-lang/issues"
+  },
+  "homepage": "https://github.com/RukiLab/goulash-lang#readme"
+}

@@ -250,7 +250,7 @@ func TestParseRejections(t *testing.T) {
 	mustFailParse(t, "*label\n", "*")
 	mustFailParse(t, "a = [1, 2\n", "']'")
 	mustFailParse(t, "if x {\nmes(1)\n", "ブロックが閉じられていません")
-	mustFailParse(t, "x = (1 + 2\n", "RPAREN")
+	mustFailParse(t, "x = (1 + 2\n", "')'")
 }
 
 func TestParseCallVsIndex(t *testing.T) {

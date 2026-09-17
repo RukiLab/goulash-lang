@@ -168,7 +168,9 @@ func init() {
 	})
 
 	// objprm(id, key, value): widget parameter. key "enable" toggles
-	// interactivity (value 0/1).
+	// interactivity (value 0/1); "textcolor"/"backcolor" set the text
+	// and background colors as 0xRRGGBB (-1 resets to the theme).
+	// Aliases: "color" for textcolor, "bgcolor" for backcolor.
 	register("objprm", 3, 3, func(in *Interp, args []Value, at Pos) (Value, error) {
 		wb, err := guiBE(in, at, "objprm")
 		if err != nil {
@@ -192,8 +194,24 @@ func init() {
 				return Null(), rtErrf(at, "%s", err.Error())
 			}
 			return Null(), nil
+		case "textcolor", "color":
+			if v != -1 && (v < 0 || v > 0xFFFFFF) {
+				return Null(), argErr("objprm", 2, at, "色は 0x000000〜0xFFFFFF または -1（既定に戻す）で指定してください。%d が指定されました", v)
+			}
+			if err := wb.SetWidgetTextColor(int(id), int(v)); err != nil {
+				return Null(), rtErrf(at, "%s", err.Error())
+			}
+			return Null(), nil
+		case "backcolor", "bgcolor":
+			if v != -1 && (v < 0 || v > 0xFFFFFF) {
+				return Null(), argErr("objprm", 2, at, "色は 0x000000〜0xFFFFFF または -1（既定に戻す）で指定してください。%d が指定されました", v)
+			}
+			if err := wb.SetWidgetBackColor(int(id), int(v)); err != nil {
+				return Null(), rtErrf(at, "%s", err.Error())
+			}
+			return Null(), nil
 		default:
-			return Null(), rtErrf(at, "objprm：不明なキー %q です（\"enable\" が必要です）", key)
+			return Null(), rtErrf(at, "objprm：不明なキー %q です（\"enable\"・\"textcolor\"・\"backcolor\" が必要です）", key)
 		}
 	})
 }

@@ -25,6 +25,9 @@ func (b *WindowBackend) IMEState() int {
 // IMESet focuses (on != 0) or blurs the IME field, returning the state.
 func (b *WindowBackend) IMESet(on bool) int {
 	if on {
+		b.mu.Lock()
+		b.imeOff = false
+		b.mu.Unlock()
 		b.imeField.Focus()
 	} else {
 		b.imeField.Blur()
@@ -32,8 +35,15 @@ func (b *WindowBackend) IMESet(on bool) int {
 		// so imeget() reports "" immediately instead of a stale
 		// composition until the next pumpIME tick (which early-returns
 		// while unfocused and would never clear it).
+		// NOTE: Focus/Blur stay outside mu on purpose. Blur ends the
+		// OS session with a synchronous dispatch to the main thread,
+		// which must never block on mu behind us (Draw snapshots
+		// under mu): holding mu here deadlocks the whole window.
 		b.mu.Lock()
+		b.imeOff = true
 		b.imeComposing = ""
+		b.imeClause = ""
+		b.imeClauseStart, b.imeClauseEnd = 0, 0
 		b.mu.Unlock()
 	}
 	return b.IMEState()
@@ -47,6 +57,45 @@ func (b *WindowBackend) IMEComposition() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.imeComposing
+}
+
+// IMEClause returns the target conversion clause (文節) inside the
+// in-conversion text with its rune offsets into the imeget() string:
+// (text, runeStart, runeEnd), all zeros when unfocused, idle, or the
+// platform reports no clause range. One call is one tick's snapshot,
+// so the offsets always match the text (two separate calls could
+// straddle a tick). Script-thread safe.
+func (b *WindowBackend) IMEClause() (string, int, int) {
+	if !b.imeField.IsFocused() {
+		return "", 0, 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.imeClause == "" {
+		return "", 0, 0
+	}
+	return b.imeClause, b.imeClauseStart, b.imeClauseEnd
+}
+
+// imeClauseOf cuts the target clause out of the composition text:
+// cs/ce are ebiten's CompositionSelection byte offsets relative to
+// the composition start (ok reports a live range). It returns the
+// clause with its rune offsets into comp, so repeated words stay
+// distinguishable. Out-of-range or non-UTF-8 cuts (and a dead range)
+// yield ("", 0, 0). Pure logic, unit-testable.
+func imeClauseOf(comp string, cs, ce int, ok bool) (string, int, int) {
+	if !ok || comp == "" {
+		return "", 0, 0
+	}
+	if cs < 0 || ce < cs || ce > len(comp) {
+		return "", 0, 0
+	}
+	out := comp[cs:ce]
+	if out == "" || !utf8.ValidString(out) {
+		return "", 0, 0
+	}
+	rs := len([]rune(comp[:cs]))
+	return out, rs, rs + len([]rune(out))
 }
 
 // IMESetAnchor fixes the candidate-window anchor at (x, y) in window
@@ -110,6 +159,10 @@ func (b *WindowBackend) pumpIME() {
 		if b.imeComposing != "" {
 			b.imeComposing = ""
 		}
+		if b.imeClause != "" {
+			b.imeClause = ""
+			b.imeClauseStart, b.imeClauseEnd = 0, 0
+		}
 		b.mu.Unlock()
 		return
 	}
@@ -131,6 +184,10 @@ func (b *WindowBackend) pumpIME() {
 		if b.imeComposing != "" {
 			b.imeComposing = ""
 		}
+		if b.imeClause != "" {
+			b.imeClause = ""
+			b.imeClauseStart, b.imeClauseEnd = 0, 0
+		}
 		b.mu.Unlock()
 		return
 	}
@@ -138,10 +195,14 @@ func (b *WindowBackend) pumpIME() {
 	start, _ := b.imeField.Selection()
 	ulen := b.imeField.UncommittedTextLengthInBytes()
 	comp := ""
+	clause := ""
+	cstart, cend := 0, 0
 	if ulen > 0 && start >= 0 {
 		rendering := b.imeField.TextForRendering()
 		if start+ulen <= len(rendering) && utf8.ValidString(rendering) {
 			comp = rendering[start : start+ulen]
+			cs, ce, cok := b.imeField.CompositionSelection()
+			clause, cstart, cend = imeClauseOf(comp, cs, ce, cok)
 		}
 	}
 	// ebiten's Windows backend never reports an emptied composition
@@ -149,6 +210,10 @@ func (b *WindowBackend) pumpIME() {
 	// so comp can stay stale after the unconfirmed string becomes
 	// empty. The OS ground truth wins: empty means clear for imeget().
 	comp = reconcileComposition(comp)
+	if comp == "" {
+		clause = ""
+		cstart, cend = 0, 0
+	}
 	b.mu.Lock()
 	// Mirror the field into the pending stream: typed text appends,
 	// in-field deletions (backspace etc.) truncate the stream tail.
@@ -163,6 +228,9 @@ func (b *WindowBackend) pumpIME() {
 	}
 	b.imePrev = full
 	b.imeComposing = comp
+	b.imeClause = clause
+	b.imeClauseStart = cstart
+	b.imeClauseEnd = cend
 	// Drained and idle: reset the field so the next tick starts from
 	// a clean, append-only slate (invisible-field caret drifts cannot
 	// accumulate across ticks).

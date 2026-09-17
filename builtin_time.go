@@ -3,14 +3,45 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"math"
+	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
 // endSignal unwinds to Run, which then reports the requested exit code.
 type endSignal struct{}
+
+// syncWriter serializes writes into one in-process writer. exec()
+// streams the child's output through the interpreter's own writer and
+// os/exec copies it from a separate goroutine, so an unsynchronized
+// target (the test/capture bytes.Buffer) loses or garbles writes under
+// that race (TestExec flaked about 10% before this guard).
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
+}
+
+// childOut wraps an interpreter-side writer for a child process. A
+// real *os.File passes through untouched: the child inherits the
+// handle directly and no goroutine in this process writes through it.
+// Everything else gets the mutex, because os/exec then copies the
+// child's output in-process while the interpreter keeps writing.
+func childOut(w io.Writer) io.Writer {
+	if _, ok := w.(*os.File); ok {
+		return w
+	}
+	return &syncWriter{w: w}
+}
 
 // procStart anchors nanotime() to the monotonic clock.
 var procStart = time.Now()
@@ -175,8 +206,8 @@ func init() {
 		}
 		cmd := exec.Command(name, argv...)
 		cmd.Stdin = in.in
-		cmd.Stdout = in.be.Out()
-		cmd.Stderr = in.errOut
+		cmd.Stdout = childOut(in.be.Out())
+		cmd.Stderr = childOut(in.errOut)
 		if err := cmd.Start(); err != nil {
 			return Null(), rtErrf(at, "exec：%s", err.Error())
 		}
@@ -206,7 +237,7 @@ func init() {
 		cmd := exec.Command(name, argv...)
 		var out strings.Builder
 		cmd.Stdout = &out
-		cmd.Stderr = in.errOut
+		cmd.Stderr = childOut(in.errOut)
 		if err := cmd.Run(); err != nil {
 			if exit, ok := err.(*exec.ExitError); ok {
 				return Null(), rtErrf(at, "pipeexec：%s は終了コード %d で終了しました", name, exit.ExitCode())

@@ -244,6 +244,18 @@ func TestGuiFormValidation(t *testing.T) {
 	if _, err := guiEval(t, "objprm(1, \"bogus\", 1)"); err == nil {
 		t.Fatal("objprm bogus key should error")
 	}
+	if _, err := guiEval(t, "objprm(99, \"textcolor\", 255)"); err == nil {
+		t.Fatal("objprm textcolor unknown should error")
+	}
+	if _, err := guiEval(t, "objprm(1, \"textcolor\", 16777216)"); err == nil {
+		t.Fatal("objprm textcolor overflow should error")
+	}
+	if _, err := guiEval(t, "objprm(1, \"backcolor\", -2)"); err == nil {
+		t.Fatal("objprm backcolor -2 should error")
+	}
+	if _, err := guiEval(t, "objprm(99, \"backcolor\", 255)"); err == nil {
+		t.Fatal("objprm backcolor unknown should error")
+	}
 }
 
 func TestGuiDrawValidation(t *testing.T) {

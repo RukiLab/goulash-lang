@@ -107,28 +107,6 @@ func TestWrapDialogText(t *testing.T) {
 	}
 }
 
-func TestCaretPixelsHeadless(t *testing.T) {
-	b := mustNew(t)
-	if _, _, ok := b.caretPixels(); ok {
-		t.Fatal("no editor should report !ok")
-	}
-	done := make(chan struct{})
-	go func() {
-		_ = b.AddInput(5, 10, 20, 160, 36, "あxy")
-		close(done)
-	}()
-	if !pumpUntil(b, done, 10*time.Second) {
-		t.Fatal("AddInput never completed")
-	}
-	b.mu.Lock()
-	b.widgets[5].edit.focused = true
-	b.mu.Unlock()
-	x, y, ok := b.caretPixels()
-	if !ok || x <= 0 || y != 20 {
-		t.Fatalf("caretPixels = %v,%v,%v", x, y, ok)
-	}
-}
-
 func TestCharStep(t *testing.T) {
 	var st charRep
 	if got := charStep(&st, "", 0); got != "" {
@@ -231,6 +209,9 @@ func TestImeDiff(t *testing.T) {
 		t.Fatalf("retype = (%d,%q)", d, a)
 	}
 }
+
+// TestCaretPixelsHeadless in ime_test.go covers the caret anchor;
+// backend_test.go keeps input/edit coverage.
 
 // TestDropLastLocked checks tail truncation across the consumer
 // chain: pending first, then the focused editor.
@@ -418,44 +399,100 @@ func TestFontExtraDirs(t *testing.T) {
 	}
 }
 
-func TestPrintlnState(t *testing.T) {
-	b := mustNew(t)
-	b.Println("Hello", 0)
-	b.Println("World", 0)
+// printFrags drives the real mes()/print() path headless and returns the
+// fragments it lays out for the canvas layer (cell origin, text, style) in
+// call order. Text is baked into the canvas buffer like any other drawing,
+// so these fragments are the layout state Draw ends up showing; callers
+// must pump (Update) or b.drainQueue() for the staged batch first if they
+// want it rasterized.
+func printFrags(t *testing.T, b *WindowBackend, s string, st TextStyle, newline bool) []textOp {
+	t.Helper()
+	d := b.printRaw(s, st, newline)
+	if d == nil {
+		return nil
+	}
+	out := make([]textOp, 0, len(d.ops))
+	for _, op := range d.ops {
+		if op.frag {
+			out = append(out, op)
+		}
+	}
+	return out
+}
+
+// fragLines joins the fragments of each row (left to right) back into the
+// text a reader sees: every print() call is its own fragment, but
+// consecutive calls continue the same line, so the visible composition is
+// what tests assert.
+func fragLines(ops []textOp) []string {
+	idx := map[int]int{}
+	var out []string
+	for _, op := range ops {
+		if op.s == "" {
+			continue
+		}
+		i, ok := idx[op.y]
+		if !ok {
+			i = len(out)
+			idx[op.y] = i
+			out = append(out, "")
+		}
+		out[i] += op.s
+	}
+	return out
+}
+
+// queuedLens reports the staged (pending) and ready (queue) draw command
+// counts, i.e. how much of the frame has been committed. Batched text
+// that has not been flushed for a closure yet counts as staged.
+func queuedLens(b *WindowBackend) (pending, queue int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if len(b.segs) != 2 {
-		t.Fatalf("segs: %+v", b.segs)
+	staged := len(b.pending)
+	if !b.textBatch.empty() {
+		staged++
 	}
-	if b.segs[0].s != "Hello" || b.segs[1].s != "World" {
-		t.Fatalf("segs: %+v", b.segs)
+	return staged, len(b.queue)
+}
+
+func TestPrintlnState(t *testing.T) {
+	b := mustNew(t)
+	frags := append(printFrags(t, b, "Hello", 0, true), printFrags(t, b, "World", 0, true)...)
+	if len(frags) != 2 {
+		t.Fatalf("frags: %+v", frags)
 	}
+	if frags[0].s != "Hello" || frags[1].s != "World" {
+		t.Fatalf("frags: %+v", frags)
+	}
+	if frags[0].y != 0 || frags[1].y != 1 {
+		t.Fatalf("rows: %+v", frags)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if b.curY != 2 {
 		t.Fatalf("curY = %d, want 2", b.curY)
 	}
 }
 
 // TestPrintlnHonorsPos covers pos() + mes()/print() positioning:
-// a bare mes() starts at the text cursor, and pos() flushes a pending
-// print() partial first (matching the immediate CUI terminal).
+// a bare mes() starts at the text cursor (the cell nearest the pos()
+// pixel), and a continuation print() stays on its own row.
 func TestPrintlnHonorsPos(t *testing.T) {
 	b := mustNew(t)
 	cw, lh := b.charW, b.lineH
 	at := func(cx, cy int) (int, int) { return int(float64(cx) * cw), int(float64(cy) * lh) }
-	b.Println("plain", 0)
+	frags := printFrags(t, b, "plain", 0, true)
 	x, y := at(5, 2)
 	b.MoveTo(x, y)
-	b.Println("hi", 0)
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if len(b.segs) != 2 {
-		t.Fatalf("segs: %+v", b.segs)
+	frags = append(frags, printFrags(t, b, "hi", 0, true)...)
+	if len(frags) != 2 {
+		t.Fatalf("frags: %+v", frags)
 	}
-	if b.segs[0].x != 0 || b.segs[0].y != 0 || b.segs[0].s != "plain" {
-		t.Fatalf("segs[0]: %+v", b.segs[0])
+	if frags[0].x != 0 || frags[0].y != 0 || frags[0].s != "plain" {
+		t.Fatalf("frags[0]: %+v", frags[0])
 	}
-	if b.segs[1].x != 5 || b.segs[1].y != 2 || b.segs[1].s != "hi" {
-		t.Fatalf("segs[1]: %+v", b.segs[1])
+	if frags[1].x != 5 || frags[1].y != 2 || frags[1].s != "hi" {
+		t.Fatalf("frags[1]: %+v", frags[1])
 	}
 }
 
@@ -464,232 +501,378 @@ func TestPrintlnMultilinePos(t *testing.T) {
 	b := mustNew(t)
 	cw, lh := b.charW, b.lineH
 	b.MoveTo(int(3*cw), int(4*lh))
-	b.Println("a\nb", 0)
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if len(b.segs) != 2 {
-		t.Fatalf("segs: %+v", b.segs)
+	frags := printFrags(t, b, "a\nb", 0, true)
+	if len(frags) != 2 {
+		t.Fatalf("frags: %+v", frags)
 	}
-	if b.segs[0].x != 3 || b.segs[0].y != 4 || b.segs[0].s != "a" {
-		t.Fatalf("segs[0]: %+v", b.segs[0])
+	if frags[0].x != 3 || frags[0].y != 4 || frags[0].s != "a" {
+		t.Fatalf("frags[0]: %+v", frags[0])
 	}
-	if b.segs[1].x != 0 || b.segs[1].y != 5 || b.segs[1].s != "b" {
-		t.Fatalf("segs[1]: %+v", b.segs[1])
+	if frags[1].x != 0 || frags[1].y != 5 || frags[1].s != "b" {
+		t.Fatalf("frags[1]: %+v", frags[1])
 	}
 }
 
-// TestMoveToFlushesPartial locks the print/pos/print composition:
-// the first fragment stays where print() started it.
-func TestMoveToFlushesPartial(t *testing.T) {
+// TestPrintPosContinue locks the print/pos/print composition on one
+// layer: the fragments of the first print() stay at the cell they were
+// laid out on, and the continuation lands beside them.
+func TestPrintPosContinue(t *testing.T) {
 	b := mustNew(t)
 	cw, lh := b.charW, b.lineH
-	b.Print("ab", 0)
+	frags := printFrags(t, b, "ab", 0, false)
 	b.MoveTo(int(4*cw), int(lh))
-	b.Print("cd", 0)
-	b.Println("ef", 0)
+	frags = append(frags, printFrags(t, b, "cd", 0, false)...)
+	frags = append(frags, printFrags(t, b, "ef", 0, true)...)
+	if len(frags) != 3 {
+		t.Fatalf("frags: %+v", frags)
+	}
+	if frags[0].x != 0 || frags[0].y != 0 || frags[0].s != "ab" {
+		t.Fatalf("frags[0]: %+v", frags[0])
+	}
+	if frags[1].x != 4 || frags[1].s != "cd" {
+		t.Fatalf("frags[1]: %+v", frags[1])
+	}
+	if frags[2].x != 6 || frags[2].s != "ef" {
+		t.Fatalf("frags[2]: %+v", frags[2])
+	}
+	if got := fragLines(frags); len(got) != 2 || got[0] != "ab" || got[1] != "cdef" {
+		t.Fatalf("lines: %q, want [ab cdef]", got)
+	}
+}
+
+// TestCellWidth checks display-cell advances: full-width runes take 2
+// cells, half-width (ASCII, half-width kana) take 1.
+func TestCellWidth(t *testing.T) {
+	for _, r := range []rune{'a', '0', ' ', 0xFF66, 0xFF9C} {
+		if got := cellWidth(r); got != 1 {
+			t.Fatalf("cellWidth(%q) = %d, want 1", r, got)
+		}
+	}
+	for _, r := range []rune{'あ', 'ア', '漢', 'Ａ', '。', 0xAC00} {
+		if got := cellWidth(r); got != 2 {
+			t.Fatalf("cellWidth(%q) = %d, want 2", r, got)
+		}
+	}
+	if got := cellCount("aあbい"); got != 6 {
+		t.Fatalf("cellCount = %d, want 6", got)
+	}
+}
+
+// TestPrintWideContinue locks continuation advances for CJK: printing
+// one char per print() call (IME echo loops do this) must not overlap.
+func TestPrintWideContinue(t *testing.T) {
+	b := mustNew(t)
+	frags := printFrags(t, b, "あ", 0, false)
+	frags = append(frags, printFrags(t, b, "い", 0, false)...)
+	if len(frags) != 2 {
+		t.Fatalf("frags: %+v", frags)
+	}
+	if frags[0].x != 0 || frags[1].x != 2 {
+		t.Fatalf("frag x = %d,%d, want 0,2", frags[0].x, frags[1].x)
+	}
+}
+
+// TestTextScrollCarry locks the baked-text scroll math: text scrolls by
+// shifting the canvas buffer, and a fractional line height (odd font
+// sizes) accumulates in scrollExact so the shifted pixels stay within
+// half a pixel of the cell grid. Plain layout state, no game loop.
+func TestTextScrollCarry(t *testing.T) {
+	b := mustNew(t)
+	// 10px font: lineH = 12.5px, charW = 5px (10/16 of the defaults).
+	if err := b.SetFontSize(10); err != nil {
+		t.Fatalf("SetFontSize(10): %v", err)
+	}
+	if b.lineH != 12.5 {
+		t.Fatalf("lineH = %v, want 12.5 (fractional)", b.lineH)
+	}
+	rows := int(float64(b.h) / b.lineH)
+	var scrolls []int
+	for i := 0; i <= rows; i++ {
+		d := b.printRaw("x", 0, true)
+		if d == nil {
+			t.Fatalf("line %d laid out nothing", i)
+		}
+		for _, op := range d.ops {
+			if op.scrollPx > 0 {
+				scrolls = append(scrolls, op.scrollPx)
+			}
+		}
+	}
+	if len(scrolls) == 0 {
+		t.Fatal("no scroll after filling the screen")
+	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if len(b.segs) != 2 {
-		t.Fatalf("segs: %+v", b.segs)
+	exact, done, curX, curY := b.scrollExact, b.scrollDone, b.curX, b.curY
+	b.mu.Unlock()
+	if curY != rows-1 || curX != 0 {
+		t.Fatalf("cursor = (%d,%d), want (0,%d)", curX, curY, rows-1)
 	}
-	if b.segs[0].x != 0 || b.segs[0].s != "ab" {
-		t.Fatalf("segs[0]: %+v", b.segs[0])
+	sum := 0
+	for _, px := range scrolls {
+		sum += px
 	}
-	if b.segs[1].x != 4 || b.segs[1].s != "cdef" {
-		t.Fatalf("segs[1]: %+v", b.segs[1])
+	if sum != done {
+		t.Fatalf("scroll pixels = %d, scrollDone = %d", sum, done)
 	}
-}
-
-// TestTextRowTop locks the mes/print row origin: text/v2 puts the
-// region top at the GeoM origin, so row tops sit exactly on the cell
-// grid (a stray +ascent once pushed every line ~one row down).
-func TestTextRowTop(t *testing.T) {
-	if got := textRowTop(0, 0, 20); got != 0 {
-		t.Fatalf("row0 = %v, want 0", got)
-	}
-	if got := textRowTop(2, 0, 20); got != 40 {
-		t.Fatalf("row2 = %v, want 40", got)
-	}
-	if got := textRowTop(5, 3, 20); got != 40 {
-		t.Fatalf("scrolled = %v, want 40", got)
+	if diff := exact - float64(done); diff < -0.5 || diff > 0.5 {
+		t.Fatalf("scroll carry off by %v px (exact %v, shifted %d)", diff, exact, done)
 	}
 }
 
-// TestPrintNewlineSplit covers print() with embedded newlines: complete
-// lines become segments, only the trailing chunk stays partial.
+// TestPrintNewlineSplit covers print() with embedded newlines: every
+// non-empty line becomes its own fragment (one per line), and the cursor
+// ends after the trailing chunk.
 func TestPrintNewlineSplit(t *testing.T) {
 	b := mustNew(t)
-	b.Print("a\nb\nc", 0)
+	frags := printFrags(t, b, "a\nb\nc", 0, false)
+	if len(frags) != 3 || frags[0].s != "a" || frags[1].s != "b" || frags[2].s != "c" {
+		t.Fatalf("frags: %+v", frags)
+	}
+	if frags[0].y != 0 || frags[1].y != 1 || frags[2].y != 2 {
+		t.Fatalf("rows: %+v", frags)
+	}
+	if got := fragLines(frags); len(got) != 3 || got[0] != "a" || got[1] != "b" || got[2] != "c" {
+		t.Fatalf("lines: %q", got)
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if len(b.segs) != 2 || b.segs[0].s != "a" || b.segs[0].y != 0 || b.segs[1].s != "b" || b.segs[1].y != 1 {
-		t.Fatalf("segs: %+v", b.segs)
-	}
-	if b.partial != "c" || b.partX != 0 || b.curY != 2 || b.curX != 1 {
-		t.Fatalf("partial=%q partX=%d curY=%d curX=%d", b.partial, b.partX, b.curY, b.curX)
+	if b.curY != 2 || b.curX != 1 {
+		t.Fatalf("cursor = (%d,%d), want (1,2)", b.curX, b.curY)
 	}
 }
 
-// TestPrintNewlineJoinsPartial checks print/print/mes composition across
-// an embedded newline.
-func TestPrintNewlineJoinsPartial(t *testing.T) {
+// TestPrintJoinAcrossNewline checks print/print/mes composition across an
+// embedded newline: the pieces still read as one line per row.
+func TestPrintJoinAcrossNewline(t *testing.T) {
 	b := mustNew(t)
-	b.Print("ab", 0)
-	b.Print("c\nd", 0)
-	b.Println("e", 0)
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if len(b.segs) != 2 || b.segs[0].s != "abc" || b.segs[1].s != "de" || b.segs[1].y != 1 {
-		t.Fatalf("segs: %+v", b.segs)
+	frags := printFrags(t, b, "ab", 0, false)
+	frags = append(frags, printFrags(t, b, "c\nd", 0, false)...)
+	frags = append(frags, printFrags(t, b, "e", 0, true)...)
+	if got := fragLines(frags); len(got) != 2 || got[0] != "abc" || got[1] != "de" {
+		t.Fatalf("lines: %q, want [abc de]", got)
+	}
+	if frags[len(frags)-1].y != 1 {
+		t.Fatalf("last fragment row = %d, want 1", frags[len(frags)-1].y)
 	}
 }
 
-// TestPrintTrailingNewline leaves a clean empty partial on the next row.
+// TestPrintTrailingNewline leaves the cursor clean on the next row (an
+// empty chunk emits no fragment).
 func TestPrintTrailingNewline(t *testing.T) {
 	b := mustNew(t)
-	b.Print("a\n", 0)
+	frags := printFrags(t, b, "a\n", 0, false)
+	if len(frags) != 1 || frags[0].s != "a" {
+		t.Fatalf("frags: %+v", frags)
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if len(b.segs) != 1 || b.segs[0].s != "a" {
-		t.Fatalf("segs: %+v", b.segs)
-	}
-	if b.partial != "" || b.curY != 1 || b.curX != 0 {
-		t.Fatalf("partial=%q curY=%d curX=%d", b.partial, b.curY, b.curX)
+	if b.curY != 1 || b.curX != 0 {
+		t.Fatalf("cursor = (%d,%d), want (0,1)", b.curX, b.curY)
 	}
 }
 
-// TestPrintNewlineStyleChange keeps per-fragment styles across the split.
+// TestPrintNewlineStyleChange keeps per-fragment styles across the split:
+// each call is its own fragment with its own style.
 func TestPrintNewlineStyleChange(t *testing.T) {
 	b := mustNew(t)
-	b.Print("a", StyleBold)
-	b.Print("b\nc", 0)
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if len(b.segs) != 2 {
-		t.Fatalf("segs: %+v", b.segs)
+	frags := printFrags(t, b, "a", StyleBold, false)
+	frags = append(frags, printFrags(t, b, "b\nc", 0, false)...)
+	if len(frags) != 3 {
+		t.Fatalf("frags: %+v", frags)
 	}
-	if b.segs[0].s != "a" || b.segs[0].st != StyleBold {
-		t.Fatalf("segs[0]: %+v", b.segs[0])
+	if frags[0].s != "a" || frags[0].st != StyleBold {
+		t.Fatalf("frags[0]: %+v", frags[0])
 	}
-	if b.segs[1].s != "b" || b.segs[1].st != 0 {
-		t.Fatalf("segs[1]: %+v", b.segs[1])
+	if frags[1].s != "b" || frags[1].st != 0 {
+		t.Fatalf("frags[1]: %+v", frags[1])
 	}
-	if b.partial != "c" || b.partSt != 0 {
-		t.Fatalf("partial=%q partSt=%v", b.partial, b.partSt)
+	if frags[2].s != "c" || frags[2].st != 0 || frags[2].y != 1 || frags[2].x != 0 {
+		t.Fatalf("frags[2]: %+v", frags[2])
 	}
 }
 
 func TestPrintStyles(t *testing.T) {
 	b := mustNew(t)
-	b.Println("a", StyleBold)
-	b.Print("b", StyleItalic)
-	// Style change mid-line flushes the partial: "b" keeps italic.
-	b.Println("c", 0)
-	// Same-style print() accumulates one partial.
-	b.Print("x", StyleBold)
-	b.Print("y", StyleBold)
-	b.Println("z", StyleBold)
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if len(b.segs) != 4 {
-		t.Fatalf("segs: %+v", b.segs)
+	frags := printFrags(t, b, "a", StyleBold, true)
+	frags = append(frags, printFrags(t, b, "b", StyleItalic, false)...)
+	// A style change mid-line is fine: the next call is its own fragment,
+	// so "b" keeps italic.
+	frags = append(frags, printFrags(t, b, "c", 0, true)...)
+	// Same-style print() calls stay separate fragments in the same row.
+	frags = append(frags, printFrags(t, b, "x", StyleBold, false)...)
+	frags = append(frags, printFrags(t, b, "y", StyleBold, false)...)
+	frags = append(frags, printFrags(t, b, "z", StyleBold, true)...)
+	if len(frags) != 6 {
+		t.Fatalf("frags: %+v", frags)
 	}
-	if b.segs[0].st != StyleBold || b.segs[1].st != StyleItalic || b.segs[2].st != 0 {
-		t.Fatalf("styles: %+v", b.segs)
+	if frags[0].st != StyleBold || frags[1].st != StyleItalic || frags[2].st != 0 {
+		t.Fatalf("styles: %+v", frags)
 	}
-	if b.segs[0].s != "a" || b.segs[1].s != "b" || b.segs[2].s != "c" {
-		t.Fatalf("texts: %+v", b.segs)
+	if frags[0].s != "a" || frags[1].s != "b" || frags[2].s != "c" {
+		t.Fatalf("texts: %+v", frags)
 	}
-	if b.segs[3].s != "xyz" || b.segs[3].st != StyleBold {
-		t.Fatalf("segs[3]: %+v", b.segs[3])
+	if frags[3].s != "x" || frags[4].s != "y" || frags[5].s != "z" {
+		t.Fatalf("texts: %+v", frags)
+	}
+	if frags[3].st != StyleBold || frags[5].st != StyleBold {
+		t.Fatalf("styles: %+v", frags)
+	}
+	// a is row 0; b/c share row 1; xyz share row 2.
+	if frags[0].y != 0 || frags[1].y != 1 || frags[2].y != 1 || frags[3].y != 2 || frags[5].y != 2 {
+		t.Fatalf("rows: %+v", frags)
+	}
+	if got := fragLines(frags); len(got) != 3 || got[0] != "a" || got[1] != "bc" || got[2] != "xyz" {
+		t.Fatalf("lines: %q, want [a bc xyz]", got)
 	}
 }
 
-// TestTextFrameBoundaryPublish locks the flicker fix: Draw only ever sees
-// the committed text snapshot. Closing a frame with await() (or sleep())
-// publishes it, so a cls() -> drawing -> mes() sequence in progress cannot
-// be observed halfway (that used to blank the text for one frame).
-//
-// Pixels are asserted through the snapshot because ebiten readback
-// (Image.At) panics before the game loop has started.
-func TestTextFrameBoundaryPublish(t *testing.T) {
+// TestTextStagedWithCanvas locks that mes()/print() ride the canvas
+// frame: consecutive calls are batched into one staged command and applied
+// together with the rest of the frame at a boundary, so Draw never sees
+// text half entered and text cannot overtake or lag the shapes drawn
+// around it.
+func TestTextStagedWithCanvas(t *testing.T) {
 	b := mustNew(t)
-
-	// Frame 1: mes() then the frame boundary (await(0) publishes now).
-	b.Println("FRAME ONE", 0)
-	if got := committedText(b); len(got) != 0 {
-		t.Fatalf("text before the boundary is not committed yet: %q", got)
+	// No yield yet: the staged batch goes straight to the game queue
+	// when flushed.
+	b.Println("first", 0)
+	if p, q := queuedLens(b); q != 0 || p != 1 {
+		t.Fatalf("before yield: pending=%d queue=%d, want 1/0", p, q)
 	}
+	b.drainQueue()
+	if p, q := queuedLens(b); q != 0 || p != 0 {
+		t.Fatalf("after drain: pending=%d queue=%d, want 0/0", p, q)
+	}
+	// First yield switches to staged mode: batched text stages with the
+	// rest of the frame.
 	b.Await(0)
-	if got := committedText(b); len(got) != 1 || got[0] != "FRAME ONE" {
-		t.Fatalf("await() should publish the frame: %q", got)
+	b.Print("one\ntwo", 0)
+	if p, q := queuedLens(b); q != 0 || p != 1 {
+		t.Fatalf("after yield: pending=%d queue=%d, want 1/0", p, q)
 	}
-
-	// Frame 2 in progress: cls() wiped the working text, no yield yet.
-	// The committed frame must stay intact instead of blinking off.
-	b.Clear()
-	b.Println("FRAME TWO", 0)
-	if got := workingText(b); len(got) != 1 || got[0] != "FRAME TWO" {
-		t.Fatalf("working text = %q, want [FRAME TWO]", got)
+	// Update alone must not publish the staged frame.
+	if err := b.Update(); err != nil {
+		t.Fatalf("Update: %v", err)
 	}
-	if got := committedText(b); len(got) != 1 || got[0] != "FRAME ONE" {
-		t.Fatalf("in-progress frame leaked to Draw (text flicker): %q, want [FRAME ONE]", got)
+	if p, q := queuedLens(b); q != 0 || p != 1 {
+		t.Fatalf("Update flushed the staged text: pending=%d queue=%d", p, q)
 	}
-
-	// The next boundary publishes frame 2.
+	// The next boundary commits it with the rest of the frame.
 	b.Await(0)
-	if got := committedText(b); len(got) != 1 || got[0] != "FRAME TWO" {
-		t.Fatalf("published frame = %q, want [FRAME TWO]", got)
+	if p, q := queuedLens(b); q != 1 || p != 0 {
+		t.Fatalf("after boundary: pending=%d queue=%d, want 0/1", p, q)
 	}
-
-	// cls() alone must not blank the committed frame before the boundary.
-	b.Clear()
-	if got := committedText(b); len(got) != 1 || got[0] != "FRAME TWO" {
-		t.Fatalf("cls() blanked the committed frame before the boundary: %q", got)
-	}
-	b.Await(0)
-	if got := committedText(b); len(got) != 0 {
-		t.Fatalf("cleared frame = %q, want none", got)
-	}
-
-	// sleep() is a frame boundary too (print() partials included).
-	b.Print("AFTER SLEEP", 0)
-	b.Sleep(0)
-	if got := committedText(b); len(got) != 0 {
-		t.Fatalf("partial text lives on a seg after flush: %q", got)
-	}
-	b.mu.Lock()
-	partial := b.drawPartial
-	b.mu.Unlock()
-	if partial != "AFTER SLEEP" {
-		t.Fatalf("published partial = %q, want AFTER SLEEP", partial)
+	b.drainQueue()
+	if p, q := queuedLens(b); q != 0 || p != 0 {
+		t.Fatalf("after drainQueue: pending=%d queue=%d, want 0/0", p, q)
 	}
 }
 
-// TestTextPublishWithoutYield: a script that never awaits/sleeps has no
-// frame boundary, so Update keeps publishing (text must not be stuck).
-// Once the script has yielded, only yield points publish.
-func TestTextPublishWithoutYield(t *testing.T) {
+// TestTextAppliesWithoutYield: a script that never awaits/sleeps has no
+// frame boundary, so Update applies its queued text (it must not be stuck
+// off screen). Once the script has yielded, only yield points commit.
+
+// TestTextBatchMergesBurst locks the batching contract: consecutive
+// mes()/print() calls collapse adjacent repeated scrolls, share one flush
+// point, and still apply in script order when merged with everything in
+// the burst.
+func TestTextBatchMergesBurst(t *testing.T) {
+	b := mustNew(t)
+	b.Println("one", 0)
+	b.Print("two", 0)
+	b.Println("three", 0)
+	b.mu.Lock()
+	if len(b.queue) != 0 {
+		b.mu.Unlock()
+		t.Fatalf("burst went straight to the game queue: %d", len(b.queue))
+	}
+	batch := b.textBatch
+	if batch == nil || len(batch.ops) == 0 {
+		b.mu.Unlock()
+		t.Fatal("want a staged text batch")
+	}
+	scrolls, frags := 0, 0
+	for _, op := range batch.ops {
+		if op.scrollPx > 0 {
+			scrolls++
+		}
+		if op.frag {
+			frags++
+		}
+	}
+	sel := batch.sel
+	b.mu.Unlock()
+	if sel != 0 {
+		t.Fatalf("batch target = %d, want 0", sel)
+	}
+	if frags != 3 {
+		t.Fatalf("batched fragments = %d, want 3 (one per call)", frags)
+	}
+	if scrolls > 1 {
+		t.Fatalf("adjacent scrolls = %d, want none repeated", scrolls)
+	}
+	b.drainQueue()
+	b.mu.Lock()
+	left := len(b.queue)
+	b.textBatch = nil
+	b.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("batched closures = %d, want 0", left)
+	}
+	if p, q := queuedLens(b); p != 0 || q != 0 {
+		t.Fatalf("after drain: pending=%d queue=%d, want 0/0", p, q)
+	}
+}
+
+// TestTextBatchFlushesBeforeShapes locks the ordering contract: a shape
+// drawn after batched text flushes it first, so call order wins on the
+// shared canvas layer.
+func TestTextBatchFlushesBeforeShapes(t *testing.T) {
+	b := mustNew(t)
+	// Staged mode: the batch must land in pending (not the live queue)
+	// ahead of the shape, so one boundary commits them in call order.
+	b.Await(0)
+	b.Println("first", 0)
+	b.FillRect(0, 0, 10, 10, [4]int{255, 0, 0, 255})
+	b.Println("second", 0)
+	b.mu.Lock()
+	staged := len(b.queue)
+	pend := len(b.pending)
+	batched := !b.textBatch.empty()
+	b.textBatch = nil
+	b.mu.Unlock()
+	if staged != 0 {
+		t.Fatalf("batched text went straight to the game queue: %d", staged)
+	}
+	if pend != 2 {
+		t.Fatalf("pending = %d, want 2 (text, shape)", pend)
+	}
+	if !batched {
+		t.Fatal("second println must remain batched after the shape")
+	}
+}
+
+func TestTextAppliesWithoutYield(t *testing.T) {
 	b := mustNew(t)
 	b.Println("no await", 0)
 	if err := b.Update(); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	if got := committedText(b); len(got) != 1 || got[0] != "no await" {
-		t.Fatalf("Update should publish before the first yield: %q", got)
+	if p, q := queuedLens(b); q != 0 || p != 0 {
+		t.Fatalf("Update should apply the immediate text draw: pending=%d queue=%d", p, q)
 	}
-	// After a yield, Update no longer publishes midway through a frame.
+	// After a yield, Update leaves the staged frame alone.
 	b.Await(0)
 	b.Println("later", 0)
 	if err := b.Update(); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
-	if got := committedText(b); len(got) != 1 || got[0] != "no await" {
-		t.Fatalf("Update published after a yield: %q", got)
+	if p, q := queuedLens(b); q != 0 || p != 1 {
+		t.Fatalf("Update published after a yield: pending=%d queue=%d", p, q)
 	}
 	b.Await(0)
-	if got := committedText(b); len(got) != 2 || got[1] != "later" {
-		t.Fatalf("await should publish the next frame: %q", got)
+	if p, q := queuedLens(b); q != 1 || p != 0 {
+		t.Fatalf("await should commit the frame: pending=%d queue=%d", p, q)
 	}
 }
 
@@ -761,28 +944,6 @@ func TestCanvasFrameBoundary(t *testing.T) {
 		t.Fatalf("drawSel=%d, want 1 after boundary", b.drawSel)
 	}
 	b.mu.Unlock()
-}
-
-// committedText returns the text strings Draw would render.
-func committedText(b *WindowBackend) []string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	out := make([]string, 0, len(b.drawSegs))
-	for _, sg := range b.drawSegs {
-		out = append(out, sg.s)
-	}
-	return out
-}
-
-// workingText returns the script-side text lines (not yet published).
-func workingText(b *WindowBackend) []string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	out := make([]string, 0, len(b.segs))
-	for _, sg := range b.segs {
-		out = append(out, sg.s)
-	}
-	return out
 }
 
 // TestWidgetRegistryHeadless drives AddButton with a manual pump
@@ -1025,6 +1186,7 @@ type renderGame struct {
 	edLaunched, edMeasured         bool
 	edRow, edFrames, edDistinct    int
 	edHashes                       []uint64
+	textAlone, textCovered, textOn int
 	wFail                          string
 	wText                          string
 	wErrs                          []string
@@ -1071,7 +1233,10 @@ func (g *renderGame) Draw(screen *ebiten.Image) {
 		g.b.Circle(100, 300, 20, true, [4]int{0, 255, 0, 255})
 		g.b.drainQueue()
 		g.b.Draw(screen)
-	case g.frames >= 8:
+	case g.frames == 8:
+		// Text/shape layering probe (text shares the canvas layer).
+		g.checkTextLayer(screen)
+	case g.frames >= 9:
 		g.b.Draw(screen)
 		if r, _, _, _ := screen.At(310, 110).RGBA(); r > 0x8000 {
 			g.rectLit = 1
@@ -1464,6 +1629,55 @@ func countLit(screen *ebiten.Image, x0, y0, x1, y1 int) int {
 		}
 	}
 	return lit
+}
+
+// countWhite counts near-white (glyph) pixels in a rect, so a probe can
+// tell text drawn over a colored shape from the shape itself.
+func countWhite(screen *ebiten.Image, x0, y0, x1, y1 int) int {
+	lit := 0
+	for y := y0; y < y1; y++ {
+		for x := x0; x < x1; x++ {
+			r, gg, bl, _ := screen.At(x, y).RGBA()
+			if r > 0x8000 && gg > 0x8000 && bl > 0x8000 {
+				lit++
+			}
+		}
+	}
+	return lit
+}
+
+// checkTextLayer verifies in-loop that mes()/print() pixels live in the
+// same canvas layer as boxf()/pset(): the call order decides which one
+// covers the other. The probe uses a screen area (440,100)-(480,120) free
+// of the shapes and widgets the other stages touch.
+func (g *renderGame) checkTextLayer(screen *ebiten.Image) {
+	b := g.b
+	const cx, cy = 55, 5 // cell origin of the probe area at 8x20 metrics
+	x0, y0 := int(float64(cx)*b.charW), int(float64(cy)*b.lineH)
+	x1, y1 := x0+40, y0+20
+	// boxf() clears the probe area, then mes() paints onto it.
+	b.FillRect(x0, y0, x1-x0, y1-y0, [4]int{0, 0, 0, 255})
+	b.mu.Lock()
+	b.curX, b.curY = cx, cy
+	b.mu.Unlock()
+	b.Println("HHHH", 0)
+	b.drainQueue()
+	b.Draw(screen)
+	g.textAlone = countLit(screen, x0, y0, x1, y1)
+	// A later boxf() covers the text: one layer, call order wins.
+	b.FillRect(x0, y0, x1-x0, y1-y0, [4]int{0, 0, 0, 255})
+	b.drainQueue()
+	b.Draw(screen)
+	g.textCovered = countLit(screen, x0, y0, x1, y1)
+	// Text after a shape draws on top of it (white glyphs over green).
+	b.FillRect(x0, y0, x1-x0, y1-y0, [4]int{0, 128, 0, 255})
+	b.mu.Lock()
+	b.curX, b.curY = cx, cy
+	b.mu.Unlock()
+	b.Println("HHHH", 0)
+	b.drainQueue()
+	b.Draw(screen)
+	g.textOn = countWhite(screen, x0, y0, x1, y1)
 }
 
 func (g *renderGame) Layout(outsideWidth, outsideHeight int) (int, int) {
@@ -1868,14 +2082,19 @@ func TestSetFontSize(t *testing.T) {
 	}
 }
 
-// TestFontDrawSmoke renders resized text headless (no readback:
-// ReadPixels panics outside the loop, plain Draw does not).
+// TestFontDrawSmoke rasterizes resized text headless through the real
+// canvas path (no readback: ReadPixels panics outside the loop, plain
+// drawing does not).
 func TestFontDrawSmoke(t *testing.T) {
 	b := mustNew(t)
 	if err := b.SetFontSize(32); err != nil {
 		t.Fatal(err)
 	}
-	b.Println("Hello, GUI! あいうえお", 0)
+	d := b.printRaw("Hello, GUI! あいうえお", 0, true)
+	if d == nil {
+		t.Fatal("printRaw laid out nothing")
+	}
+	b.applyTextDraw(d)
 	b.Draw(ebiten.NewImage(640, 480))
 }
 
@@ -2292,6 +2511,114 @@ func TestMouseWheelConsume(t *testing.T) {
 	}
 }
 
+// TestWidgetTextBackColors covers objprm "textcolor"/"backcolor" across
+// every widget kind: getters, reset (-1), validation, disabled retention,
+// and state retention across list/combo/area rebuilds.
+// NOTE: defined before TestGuiRender: Ebiten allows a single RunGame per
+// process, after which NewImage panics, so image-creating tests must run
+// first (like the other widget tests above).
+func TestWidgetTextBackColors(t *testing.T) {
+	b := mustNew(t)
+	mustAddWidget(t, b, func() error { return b.AddButton(1, "OK", 10, 10, 120, 40) })
+	mustAddWidget(t, b, func() error { return b.AddInput(2, 10, 60, 160, 36, "hi") })
+	mustAddWidget(t, b, func() error { return b.AddList(3, 10, 110, 160, 80, []string{"a", "b"}) })
+	mustAddWidget(t, b, func() error { return b.AddCheck(4, "agree", 10, 200, 0, 0, true) })
+	mustAddWidget(t, b, func() error { return b.AddCombo(5, 10, 240, 160, 36, []string{"x", "y"}, 1) })
+	mustAddWidget(t, b, func() error { return b.AddArea(6, 10, 290, 200, 80, "memo") })
+
+	// Unknown ids fail without blocking.
+	if err := b.SetWidgetTextColor(99, 0xFF0000); err == nil {
+		t.Fatal("textcolor unknown should error")
+	}
+	if err := b.SetWidgetBackColor(99, 0xFF0000); err == nil {
+		t.Fatal("backcolor unknown should error")
+	}
+	// Range validation.
+	if err := b.SetWidgetTextColor(1, 0x1000000); err == nil {
+		t.Fatal("textcolor overflow should error")
+	}
+	if err := b.SetWidgetBackColor(1, -2); err == nil {
+		t.Fatal("backcolor -2 should error")
+	}
+
+	// Set + getters on every kind.
+	for _, id := range []int{1, 2, 3, 4, 5, 6} {
+		if err := runWidgetOp(t, b, func() error { return b.SetWidgetTextColor(id, 0xFF0000) }); err != nil {
+			t.Fatalf("SetWidgetTextColor(%d): %v", id, err)
+		}
+		if err := runWidgetOp(t, b, func() error { return b.SetWidgetBackColor(id, 0x00FF00) }); err != nil {
+			t.Fatalf("SetWidgetBackColor(%d): %v", id, err)
+		}
+		if v, has, _ := b.WidgetTextRGB(id); !has || v != 0xFF0000 {
+			t.Fatalf("WidgetTextRGB(%d) = %06X,%v want FF0000,true", id, v, has)
+		}
+		if v, has, _ := b.WidgetBackRGB(id); !has || v != 0x00FF00 {
+			t.Fatalf("WidgetBackRGB(%d) = %06X,%v want 00FF00,true", id, v, has)
+		}
+	}
+	// State survives the list/combo/area rebuilds: selection, text,
+	// checkbox latch and button latch.
+	b.mu.Lock()
+	b.widgets[3].selIdx = 1
+	b.mu.Unlock()
+	if err := runWidgetOp(t, b, func() error { return b.SetWidgetTextColor(3, 0x0000FF) }); err != nil {
+		t.Fatalf("recolor list: %v", err)
+	}
+	if idx, _ := b.SelectedIndex(3); idx != 1 {
+		t.Fatalf("list sel after recolor = %d, want 1", idx)
+	}
+	if err := runWidgetOp(t, b, func() error { return b.SetWidgetTextColor(5, 0x0000FF) }); err != nil {
+		t.Fatalf("recolor combo: %v", err)
+	}
+	if idx, _ := b.SelectedIndex(5); idx != 1 {
+		t.Fatalf("combo sel after recolor = %d, want 1", idx)
+	}
+	if s, _ := b.AreaText(6); s != "memo" {
+		t.Fatalf("area text after recolor = %q, want memo", s)
+	}
+	if p, _ := b.Checked(4); !p {
+		t.Fatal("checkbox should stay checked after recolor")
+	}
+	// Disabled survives recolor.
+	if err := runWidgetOp(t, b, func() error { return b.SetEnabled(1, false) }); err != nil {
+		t.Fatalf("SetEnabled: %v", err)
+	}
+	if err := runWidgetOp(t, b, func() error { return b.SetWidgetTextColor(1, 0x123456) }); err != nil {
+		t.Fatalf("recolor disabled button: %v", err)
+	}
+	b.mu.Lock()
+	dis := b.widgets[1].child.GetWidget().Disabled
+	b.mu.Unlock()
+	if !dis {
+		t.Fatal("button should stay disabled after recolor")
+	}
+	// Reset clears overrides.
+	if err := runWidgetOp(t, b, func() error { return b.SetWidgetTextColor(1, -1) }); err != nil {
+		t.Fatalf("reset textcolor: %v", err)
+	}
+	if _, has, _ := b.WidgetTextRGB(1); has {
+		t.Fatal("textcolor reset should clear override")
+	}
+	if err := runWidgetOp(t, b, func() error { return b.SetWidgetBackColor(1, -1) }); err != nil {
+		t.Fatalf("reset backcolor: %v", err)
+	}
+	if _, has, _ := b.WidgetBackRGB(1); has {
+		t.Fatal("backcolor reset should clear override")
+	}
+	// Icon-only image buttons keep artwork: backcolor is rejected.
+	b.allocBuf(77)
+	b.mu.Lock()
+	if b.targets == nil {
+		b.targets = map[int]*ebiten.Image{}
+	}
+	b.targets[77] = ebiten.NewImage(120, 40)
+	b.mu.Unlock()
+	mustAddWidget(t, b, func() error { return b.AddButton(8, "", 10, 380, 120, 40, 77) })
+	if err := b.SetWidgetBackColor(8, 0xFF0000); err == nil {
+		t.Fatal("icon button backcolor should error")
+	}
+}
+
 // loopRan guards the one-loop-per-process Ebiten limit:
 // repeat runs (go test -count=N) skip instead of panicking.
 var loopRan = false
@@ -2331,6 +2658,19 @@ func TestGuiRender(t *testing.T) {
 	if g.circleLit == 0 {
 		t.Fatal("Circle pixel not visible")
 	}
+	// Text shares the canvas layer with the shapes: mes() pixels show up
+	// in the buffer, a later boxf() covers them, and mes() after boxf()
+	// draws on top of the shape.
+	t.Logf("text layer: alone=%d covered=%d over-shape=%d", g.textAlone, g.textCovered, g.textOn)
+	if g.textAlone == 0 {
+		t.Fatal("mes() pixels missing from the canvas layer")
+	}
+	if g.textCovered != 0 {
+		t.Fatalf("boxf() after mes() left %d text pixels: text is not on the canvas layer", g.textCovered)
+	}
+	if g.textOn == 0 {
+		t.Fatal("mes() after boxf() drew nothing on top of the shape")
+	}
 	if !g.probedInput {
 		t.Fatal("input stage never ran")
 	}
@@ -2359,45 +2699,24 @@ func TestGuiRender(t *testing.T) {
 	}
 }
 
-func TestIMEAnchorHeadless(t *testing.T) {
-	b := mustNew(t)
-	if _, _, ok := b.IMEAnchor(); ok {
-		t.Fatal("default anchor should be automatic (!ok)")
+// runWidgetOp pumps runOnLoop-bound widget ops headless.
+func runWidgetOp(t *testing.T, b *WindowBackend, op func() error) error {
+	t.Helper()
+	ch := make(chan struct{})
+	var opErr error
+	go func() {
+		defer close(ch)
+		opErr = op()
+	}()
+	if !pumpUntil(b, ch, 10*time.Second) {
+		t.Fatal("widget op never completed")
 	}
-	b.IMESetAnchor(123, 45)
-	x, y, ok := b.IMEAnchor()
-	if !ok || x != 123 || y != 45 {
-		t.Fatalf("IMEAnchor = %d,%d,%v, want 123,45,true", x, y, ok)
-	}
-	b.IMEClearAnchor()
-	if _, _, ok := b.IMEAnchor(); ok {
-		t.Fatal("after clear anchor should be automatic (!ok)")
-	}
+	return opErr
 }
 
-func TestIMEBoundsPriority(t *testing.T) {
-	// Automatic caret wins over the (0,0) fallback.
-	got := imeBounds(false, 0, 0, true, 10.4, 20.6, 20)
-	want := image.Rect(10, 21, 11, 41)
-	if got != want {
-		t.Fatalf("caret bounds = %v, want %v", got, want)
-	}
-	// Manual imepos wins over the caret.
-	got = imeBounds(true, 123, 45, true, 10.4, 20.6, 20)
-	want = image.Rect(123, 45, 124, 65)
-	if got != want {
-		t.Fatalf("anchor bounds = %v, want %v", got, want)
-	}
-	// Manual imepos also wins with no focused editor.
-	got = imeBounds(true, 5, 6, false, 0, 0, 20)
-	want = image.Rect(5, 6, 6, 26)
-	if got != want {
-		t.Fatalf("anchor-only bounds = %v, want %v", got, want)
-	}
-	// Neither anchor nor caret: the (0,0) fallback.
-	got = imeBounds(false, 0, 0, false, 0, 0, 20)
-	want = image.Rect(0, 0, 1, 20)
-	if got != want {
-		t.Fatalf("fallback bounds = %v, want %v", got, want)
+func mustAddWidget(t *testing.T, b *WindowBackend, op func() error) {
+	t.Helper()
+	if err := runWidgetOp(t, b, op); err != nil {
+		t.Fatalf("add widget: %v", err)
 	}
 }

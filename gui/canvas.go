@@ -30,9 +30,12 @@ const MaxImageDim = 4096
 // to the game-thread queue (no frame boundary yet); afterwards it is
 // staged in pending and flushed as one frame at await()/sleep()/end so
 // Draw never observes a half-built canvas (cls 直後の空白1フレーム防止).
+// A pending mes()/print() burst is flushed first so script call order
+// (shapes vs text) is preserved.
 func (b *WindowBackend) enqueue(cmd func()) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.flushTextBatchLocked()
 	if b.yieldedOnce {
 		b.pending = append(b.pending, cmd)
 		return
@@ -43,6 +46,7 @@ func (b *WindowBackend) enqueue(cmd func()) {
 // drainQueue runs pending commands on the game thread.
 func (b *WindowBackend) drainQueue() {
 	b.mu.Lock()
+	b.flushTextBatchLocked()
 	q := b.queue
 	b.queue = nil
 	b.mu.Unlock()
@@ -58,6 +62,7 @@ func (b *WindowBackend) drainQueue() {
 func (b *WindowBackend) runOnLoop(fn func()) {
 	done := make(chan struct{})
 	b.mu.Lock()
+	b.flushTextBatchLocked()
 	if len(b.pending) > 0 {
 		b.queue = append(b.queue, b.pending...)
 		b.pending = nil
@@ -164,7 +169,8 @@ func (b *WindowBackend) CursorPixels() (int, int) {
 	return b.gx, b.gy
 }
 
-// SelectTarget switches the draw buffer (gsel).
+// SelectTarget switches the draw buffer (gsel). It flushes any pending
+// text first so batched text stays on the buffer it was laid out for.
 func (b *WindowBackend) SelectTarget(id int) error {
 	if id < 0 || id >= maxBuffers {
 		return fmt.Errorf("gsel：id は 0 から %d の範囲で指定してください。%d が指定されました", maxBuffers-1, id)
@@ -172,6 +178,7 @@ func (b *WindowBackend) SelectTarget(id int) error {
 	b.allocBuf(id)
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	b.flushTextBatchLocked()
 	b.sel = id
 	return nil
 }
@@ -199,9 +206,11 @@ func (b *WindowBackend) ResizeCanvas(w, h int) {
 			b.bufs = map[int]bool{}
 		}
 		b.bufs[0] = true
-		b.segs = nil
-		b.partial = ""
 		b.curX, b.curY, b.gx, b.gy = 0, 0, 0, 0
+		b.scrollExact, b.scrollDone = 0, 0
+		// Stale scratch images belong to the old size; drop them so a
+		// later scroll cannot blit from a mismatched buffer.
+		b.scrollScratch = nil
 		b.mu.Unlock()
 	})
 }
